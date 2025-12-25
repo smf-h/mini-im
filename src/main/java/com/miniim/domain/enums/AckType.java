@@ -1,0 +1,38 @@
+package com.miniim.domain.enums;
+
+import com.baomidou.mybatisplus.annotation.EnumValue;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+
+/**
+ * 消息回执类型（对应表字段：t_message_ack.ack_type）。
+ *
+ * <p>数字与类型映射：</p>
+ * <ul>
+ *   <li>1 = 已投递（DELIVERED）</li>
+ *   <li>2 = 已读（READ）</li>
+ * </ul>
+ */
+@Getter
+@RequiredArgsConstructor
+public enum AckType {
+
+    /** 1 = saved */
+    SAVED(1, "saved"),
+
+    /** 2 = read */
+    READ(2, "read"),
+
+    /**
+     * 3 = delivered
+     */
+    DELIVERED(3,"delivered") ,
+    RECEIVED(4,"received"),
+    DROPPED(5,"dropped");
+
+
+    @EnumValue
+    private final Integer code;
+
+    private final String desc;
+}

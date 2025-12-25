@@ -1,0 +1,60 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: mini-im
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/mini_im?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 2823128231
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: ASSIGN_ID
+
+logging:
+  level:
+    com.miniim: info
+
+im:
+  caffeine:
+    client-msg-id:
+      initial-capacity: 100
+      maximum-size: 1000
+      expire-after-access-seconds: 600
+  auth:
+    issuer: mini-im
+    # 生产环境请通过环境变量注入，至少 32 字符
+    jwt-secret: "change-me-please-change-me-please-change-me"
+    access-token-ttl-seconds: 1800
+    refresh-token-ttl-seconds: 2592000
+
+  service:
+    # 业务服务自身对外地址（给网关回调/或将来注册中心使用）
+    base-url: http://127.0.0.1:${server.port}
+  gateway:
+    # Netty 网关对外 WebSocket 端口与路径
+    ws:
+      host: 0.0.0.0
+      port: 9001
+      path: /ws
+    # 业务服务提供给网关的鉴权接口（网关握手/首包鉴权时调用）
+    auth-verify-url: http://127.0.0.1:8080/auth/verify
+    # 业务服务调用网关推送消息的 HTTP 地址（你后面实现 push API 用）
+    push-url: http://127.0.0.1:9001/push
+
+  message:
+    # 可靠投递相关（服务端等待 ACK 的时间）
+    ack-timeout-ms: 5000
+    max-retry: 3

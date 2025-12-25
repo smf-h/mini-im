@@ -1,0 +1,25 @@
+# Netty Gateway 配置示例（你写网关模块时直接用）
+# 使用方式：把网关做成单独进程/模块时，读取该配置即可。
+
+im:
+  gateway:
+    ws:
+      host: 0.0.0.0
+      port: 9001
+      path: /ws
+
+    # 网关启动后，对外提供一个简单 HTTP 推送入口（业务服务用来推送到 WS 连接）
+    http:
+      host: 0.0.0.0
+      port: 9002
+
+    # 鉴权接口（由业务服务提供）
+    auth-verify-url: http://127.0.0.1:8080/auth/verify
+
+  message:
+    ack-timeout-ms: 5000
+    max-retry: 3
+
+logging:
+  level:
+    root: info

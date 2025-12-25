@@ -1,0 +1,37 @@
+﻿# Compiled classes
+*.class
+
+# Logs
+*.log
+logs/
+
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Gradle (safety)
+.gradle/
+build/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+out/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*
