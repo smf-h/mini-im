@@ -7,6 +7,9 @@
 ## [Unreleased]
 
 ### 变更
+- 分支保护: 临时关闭 Code Owner 审核和必需审核（单人开发），保留 build 状态检查
+
+### 变更
 - 代码所有者: 新增 .github/CODEOWNERS（默认 @smf-h）
 - 审核策略: 启用 Code Owner 审核作为合并前置条件
 
@@ -18,5 +21,6 @@
 
 ### 新增
 - 初始化 helloagents 知识库骨架与基础文档
+
 
 
