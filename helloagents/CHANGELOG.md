@@ -6,7 +6,12 @@
 
 ## [Unreleased]
 
+### 变更
+- CI: 新增 GitHub Actions（Java 17 + Maven test）
+- 分支保护: master 启用必需PR审核与状态检查
+
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 
 ### 新增
 - 初始化 helloagents 知识库骨架与基础文档
+
