@@ -1,4 +1,4 @@
--- MySQL 8.x
+﻿-- MySQL 8.x
 -- Database: mini_im
 
 CREATE TABLE IF NOT EXISTS t_user (
@@ -62,22 +62,21 @@ CREATE TABLE IF NOT EXISTS t_message (
   to_user_id BIGINT NULL COMMENT 'single chat target userId',
   msg_type TINYINT NOT NULL DEFAULT 1 COMMENT '1=text',
   content TEXT NOT NULL,
-  status TINYINT NOT NULL DEFAULT 1 COMMENT '0=SENT,1=SAVED,2=DELIVERED,3=READ,4=REVOKED',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '0=SENT,1=SAVED,2=DELIVERED,3=READ,4=REVOKED,5=RECEIVED,6=DROPPED',
   client_msg_id VARCHAR(64) NULL COMMENT 'client idempotency key',
   server_msg_id VARCHAR(64) NULL COMMENT 'server message id for client (usually equals id)',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   KEY idx_msg_single_id_id (single_chat_id, id),
   KEY idx_msg_group_id_id (group_id, id),
-  KEY idx_msg_to_user (to_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  KEY idx_msg_to_user (to_user_id),\r\n  UNIQUE KEY uk_msg_client_id (from_user_id, client_msg_id)\r\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS t_message_ack (
   id BIGINT NOT NULL PRIMARY KEY,
   message_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
   device_id VARCHAR(64) NULL,
-  ack_type TINYINT NOT NULL COMMENT '1=SAVED,2=READ',
+  ack_type TINYINT NOT NULL COMMENT '1=SAVED,2=DELIVERED,3=READ',
   ack_at DATETIME(3) NOT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
@@ -85,3 +84,4 @@ CREATE TABLE IF NOT EXISTS t_message_ack (
   KEY idx_ack_user (user_id),
   KEY idx_ack_msg (message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
