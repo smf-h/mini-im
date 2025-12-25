@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### 新增
+- 单聊 v1：新增 REST 骨架（/api/single-chat），含发送/历史/会话接口（TEXT-only）
+- 应用服务：SingleChatAppService（组合幂等与会话策略）
+- 文档：wiki/api.md 增补单聊 REST
+
+
 ### 变更
 - 分支保护: 临时关闭 Code Owner 审核和必需审核（单人开发），保留 build 状态检查
 
@@ -21,6 +27,7 @@
 
 ### 新增
 - 初始化 helloagents 知识库骨架与基础文档
+
 
 
 
