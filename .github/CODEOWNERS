@@ -1,0 +1,12 @@
+﻿# Default owners
+* @smf-h
+
+# Modules (explicit for clarity and future team mapping)
+/src/main/java/com/miniim/auth/ @smf-h
+/src/main/java/com/miniim/gateway/ @smf-h
+/src/main/java/com/miniim/domain/ @smf-h
+/src/main/java/com/miniim/config/ @smf-h
+/src/main/java/com/miniim/common/ @smf-h
+
+# Docs & knowledge base
+/helloagents/ @smf-h
