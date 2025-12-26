@@ -43,10 +43,12 @@ public class WsCron {
         LocalDateTime now = LocalDateTime.now();
         // 轻微延迟窗口，避免扫到“刚落库还在处理”的消息（按需调整/删除）
         LocalDateTime cutoff = now.minusSeconds(1);
+        LocalDateTime retry = now.minusSeconds(20);
 
         LambdaQueryWrapper<MessageEntity> qw = new LambdaQueryWrapper<>();
         qw.eq(MessageEntity::getStatus, MessageStatus.SAVED)
                 .lt(MessageEntity::getCreatedAt, cutoff)
+                .lt(MessageEntity::getUpdatedAt, retry)
                 .orderByAsc(MessageEntity::getId)
                 .last("limit 100");
 
@@ -60,6 +62,10 @@ public class WsCron {
             Long toUserId = msg.getToUserId();
             Channel channelTo=sessionRegistry.getChannel(toUserId);
             if (channelTo == null||!channelTo.isActive()) {
+                LambdaUpdateWrapper<MessageEntity> updateWrapper = new LambdaUpdateWrapper<>();
+                updateWrapper.eq(msg.getServerMsgId()!=null,MessageEntity::getServerMsgId, msg.getServerMsgId());
+                updateWrapper.set(MessageEntity::getStatus, MessageStatus.DROPPED);
+                messageService.update(updateWrapper);
                 continue;
             }
             WsEnvelope envelope = new WsEnvelope();

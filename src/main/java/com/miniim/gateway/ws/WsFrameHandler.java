@@ -160,7 +160,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         messageEntity.setToUserId(toUserId);
         MessageType messageType = MessageType.fromString(msg.getMsgType());
         messageEntity.setMsgType(messageType == null ? MessageType.TEXT : messageType);
-        messageEntity.setStatus(dropped ? MessageStatus.DROPPED : MessageStatus.SENT);
+        messageEntity.setStatus(dropped ? MessageStatus.DROPPED : MessageStatus.SAVED);
         messageEntity.setContent(msg.getBody());
         messageEntity.setClientMsgId(msg.getClientMsgId());
         base.setServerMsgId(serverMsgId);
@@ -254,17 +254,17 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         write(ctx, ack);
     }
 
-    private boolean handleAck(ChannelHandlerContext ctx, WsEnvelope msg) {
+    private void handleAck(ChannelHandlerContext ctx, WsEnvelope msg) {
         Channel channel = ctx.channel();
         Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
         if (fromUserId == null) {
             writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
             ctx.close();
-            return false;
+            return ;
         }
 
         if (!validateAck(ctx, msg)) {
-            return false;
+            return ;
         }
 
         msg.setFrom(fromUserId);
@@ -272,29 +272,33 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
         Long toUserId = msg.getTo();
         Channel target = sessionRegistry.getChannel(toUserId);
-        if (target == null || !target.isActive()) {
-            writeError(ctx, "ack_target_offline", msg.getClientMsgId(), msg.getServerMsgId());
-            return false;
-        }
+//        if (target == null || !target.isActive()) {
+//            writeError(ctx, "ack_target_offline", msg.getClientMsgId(), msg.getServerMsgId());
+//            return false;
+//        }
 
         if ("received".equalsIgnoreCase(msg.ackType) || "ack_receive".equalsIgnoreCase(msg.ackType)) {
-            return handleAckReceived(msg, fromUserId, toUserId);
+             handleAckReceived(msg, fromUserId, toUserId);
         }
 
         // 未处理其他类型
-        return false;
+        return ;
     }
 
-    private boolean handleAckReceived(WsEnvelope msg, Long fromUserId, Long toUserId) {
-        MessageEntity messageEntity = new MessageEntity();
-        messageEntity.setStatus(MessageStatus.RECEIVED);
-        messageEntity.setClientMsgId(msg.getClientMsgId());
-        messageEntity.setServerMsgId(msg.getServerMsgId());
-        messageEntity.setContent(msg.getBody());
-        messageEntity.setChatType(ChatType.valueOf(msg.getType()));
-        messageEntity.setFromUserId(fromUserId);
-        messageEntity.setToUserId(toUserId);
-        return messageService.updateById(messageEntity);
+    private void handleAckReceived(WsEnvelope msg, Long fromUserId, Long toUserId) {
+        LambdaUpdateWrapper<MessageEntity> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(MessageEntity::getClientMsgId, msg.getClientMsgId());
+        updateWrapper.eq(MessageEntity::getServerMsgId, msg.getServerMsgId());
+        updateWrapper.eq(MessageEntity::getFromUserId, toUserId);
+        updateWrapper.eq(MessageEntity::getToUserId, fromUserId);
+        updateWrapper.set(MessageEntity::getStatus, MessageStatus.RECEIVED);
+        Boolean result;
+        CompletableFuture<Boolean> completableFuture = CompletableFuture.supplyAsync(() -> messageService.update(updateWrapper), dbExecutor).orTimeout(3, TimeUnit.SECONDS)
+                .exceptionally(e -> {
+                    log.error("update message failed: {}", e.toString());
+                    return null;
+                });
+
     }
 
     private void handleAuth(ChannelHandlerContext ctx, WsEnvelope msg) {

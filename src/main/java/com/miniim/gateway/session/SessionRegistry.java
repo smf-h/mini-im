@@ -3,6 +3,7 @@ package com.miniim.gateway.session;
 import com.miniim.gateway.config.GatewayProperties;
 import io.netty.channel.Channel;
 import io.netty.util.AttributeKey;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +11,7 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Component
 public class SessionRegistry {
 
@@ -86,14 +88,23 @@ public class SessionRegistry {
     }
 
     private void setRoute(long userId) {
-        redis.opsForValue().set(routeKey(userId), instanceId, ROUTE_TTL);
+        try {
+            redis.opsForValue().set(routeKey(userId), instanceId, ROUTE_TTL);
+        } catch (Exception e) {
+            // 开发/单机模式：Redis 不可用时允许降级（仅维持本机 userId -> Channel 映射）
+            log.warn("setRoute failed, redis unavailable? userId={}, instanceId={}, err={}", userId, instanceId, e.toString());
+        }
     }
 
     private void deleteRouteIfOwned(long userId) {
         String key = routeKey(userId);
-        String cur = redis.opsForValue().get(key);
-        if (instanceId.equals(cur)) {
-            redis.delete(key);
+        try {
+            String cur = redis.opsForValue().get(key);
+            if (instanceId.equals(cur)) {
+                redis.delete(key);
+            }
+        } catch (Exception e) {
+            log.warn("deleteRouteIfOwned failed, redis unavailable? userId={}, instanceId={}, err={}", userId, instanceId, e.toString());
         }
     }
 

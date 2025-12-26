@@ -13,3 +13,18 @@
 ## 与数据库的对应（以 schema 为准）
 - 表定义：`src/main/resources/db/schema-mysql.sql`
 - 实体包：`com.miniim.domain.entity`
+
+## 单聊消息状态约定（v1，以代码为准）
+- 表：`t_message`
+- 关键字段：
+  - `id`：msgId（建议作为 `serverMsgId` 的主键来源）
+  - `client_msg_id`：客户端幂等键（用于发送方重试去重）
+  - `status`：消息状态（枚举见 `com.miniim.domain.enums.MessageStatus`）
+- 关键状态（当前使用口径）：
+  - `SAVED`：已落库，等待接收方 ACK_RECEIVED
+  - `DROPPED`：离线/待补发
+  - `RECEIVED`：接收方已收到（业务最终态之一）
+
+## ACK 存储（规划）
+- 表：`t_message_ack`
+- 用途：存储客户端回执（DELIVERED/READ 等），用于更精细的投递确认与未读统计（后续迭代）。
