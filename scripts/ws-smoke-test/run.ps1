@@ -4,7 +4,7 @@ param(
   [long]$UserA = 10001,
   [long]$UserB = 10002,
   [int]$TimeoutMs = 8000,
-  [ValidateSet("all","basic","idempotency","offline")]
+  [ValidateSet("all","basic","idempotency","offline","cron")]
   [string]$Scenario = "all",
   [switch]$CheckDb,
   [string]$DbHost = "127.0.0.1",

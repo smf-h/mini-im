@@ -199,13 +199,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                 future.addListener(f -> {
                     if (f.isSuccess()) {
                         // 更新消息状态为 DELIVERED
-                        CompletableFuture.runAsync(() -> {
-                            MessageEntity newMessageEntity = new MessageEntity();
-                            BeanUtil.copyProperties(messageEntity, newMessageEntity);
-                            newMessageEntity.setStatus(MessageStatus.DELIVERED);
-                            messageService.updateById(newMessageEntity);
-                        }, dbExecutor).orTimeout(3,TimeUnit.SECONDS);
-                        ctx.executor().execute(() -> writeAck(ctx, fromUserId, base.getClientMsgId(), serverMsgId, "DELIVERED"));
+                        // deliver 状态当前不启用：消息保持 SAVED，直到收到收件人 ACK_RECEIVED 才推进到 RECEIVED
                     } else {
                         log.error("deliver message to user {} failed: {}", toUserId, f.cause().toString());
                         ctx.executor().execute(() -> writeError(ctx, "deliver_failed", base.getClientMsgId(), serverMsgId));

@@ -3,8 +3,10 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -45,7 +47,7 @@ import javax.crypto.spec.SecretKeySpec;
  * -DjwtSecret=change-me-please-change-me-please-change-me
  * -DuserA=10001 -DuserB=10002
  * -DtimeoutMs=8000
- * -Dscenario=basic|idempotency|offline|all
+ * -Dscenario=basic|idempotency|offline|cron|all
  */
 public class WsSmokeTest {
 
@@ -87,6 +89,9 @@ public class WsSmokeTest {
             if ("offline".equals(SCENARIO) || "all".equals(SCENARIO)) {
                 scenarios.put("offline_drop_and_recover", scenarioOfflineDropRecover(tokenA, tokenB));
             }
+            if ("cron".equals(SCENARIO) || "all".equals(SCENARIO)) {
+                scenarios.put("cron_resend_no_ack_receive", scenarioCronResend(tokenA, tokenB));
+            }
         } catch (Exception e) {
             ok = false;
             out.put("error", String.valueOf(e));
@@ -116,6 +121,8 @@ public class WsSmokeTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ok", false);
         r.put("why", "验证单聊基础 ACK 链路：ACK(saved) + ACK_RECEIVED");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
 
         HttpClient httpClient = HttpClient.newHttpClient();
         QueueListener listenerA = new QueueListener();
@@ -126,17 +133,26 @@ public class WsSmokeTest {
         try {
             wsA = connect(httpClient, tokenA, listenerA);
             wsB = connect(httpClient, tokenB, listenerB);
+            steps.add(step("A->S", "AUTH", authJson(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
+            steps.add(step("B->S", "AUTH", authJson(tokenB)));
             auth(wsB, tokenB, listenerB.queue);
 
             String clientMsgId = "basic-" + UUID.randomUUID();
-            sendSingleChat(wsA, clientMsgId, USER_B, "hello-basic");
+            String sendJson = singleChatJson(clientMsgId, USER_B, "hello-basic");
+            steps.add(step("A->S", "SINGLE_CHAT send", sendJson));
+            wsA.sendText(sendJson, true).join();
 
             String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved)", ackSaved));
             String serverMsgId = requireField(ackSaved, "serverMsgId");
 
-            await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
-            sendAckReceive(wsB, clientMsgId, serverMsgId, USER_A);
+            String delivered = await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
+            steps.add(step("S->B", "SINGLE_CHAT deliver", delivered));
+
+            String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
+            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            wsB.sendText(ackReceiveJson, true).join();
 
             // 给服务端异步 DB 更新一点时间（服务端用 dbExecutor）
             Thread.sleep(800);
@@ -169,6 +185,8 @@ public class WsSmokeTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ok", false);
         r.put("why", "验证 clientMsgId 幂等：同一 clientMsgId 重发应返回同一 serverMsgId");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
 
         HttpClient httpClient = HttpClient.newHttpClient();
         QueueListener listenerA = new QueueListener();
@@ -179,18 +197,26 @@ public class WsSmokeTest {
         try {
             wsA = connect(httpClient, tokenA, listenerA);
             wsB = connect(httpClient, tokenB, listenerB);
+            steps.add(step("A->S", "AUTH", authJson(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
+            steps.add(step("B->S", "AUTH", authJson(tokenB)));
             auth(wsB, tokenB, listenerB.queue);
 
             String clientMsgId = "idem-" + UUID.randomUUID();
 
-            sendSingleChat(wsA, clientMsgId, USER_B, "hello-idem-1");
+            String send1 = singleChatJson(clientMsgId, USER_B, "hello-idem-1");
+            steps.add(step("A->S", "SINGLE_CHAT send #1", send1));
+            wsA.sendText(send1, true).join();
             String ack1 = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved) #1", ack1));
             String serverMsgId1 = requireField(ack1, "serverMsgId");
 
             // 立即“重发同一个 clientMsgId”
-            sendSingleChat(wsA, clientMsgId, USER_B, "hello-idem-2");
+            String send2 = singleChatJson(clientMsgId, USER_B, "hello-idem-2");
+            steps.add(step("A->S", "SINGLE_CHAT resend #2", send2));
+            wsA.sendText(send2, true).join();
             String ack2 = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved) #2", ack2));
             String serverMsgId2 = requireField(ack2, "serverMsgId");
 
             boolean same = serverMsgId1.equals(serverMsgId2);
@@ -199,8 +225,12 @@ public class WsSmokeTest {
             }
 
             // 清理：让 B 把其中一条消息 ACK_RECEIVED 掉，避免 DB 一直积压（不严格要求）
-            await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId1));
-            sendAckReceive(wsB, clientMsgId, serverMsgId1, USER_A);
+            String delivered = await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId1));
+            steps.add(step("S->B", "SINGLE_CHAT deliver", delivered));
+
+            String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId1, USER_A);
+            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            wsB.sendText(ackReceiveJson, true).join();
             Thread.sleep(300);
 
             r.put("ok", true);
@@ -230,6 +260,8 @@ public class WsSmokeTest {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ok", false);
         r.put("why", "验证离线链路：收件人离线落库DROPPED，上线后补发并ACK_RECEIVED推进状态");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
 
         HttpClient httpClient = HttpClient.newHttpClient();
         QueueListener listenerA = new QueueListener();
@@ -237,12 +269,16 @@ public class WsSmokeTest {
         WebSocket wsA = null;
         try {
             wsA = connect(httpClient, tokenA, listenerA);
+            steps.add(step("A->S", "AUTH", authJson(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
 
             String clientMsgId = "offline-" + UUID.randomUUID();
-            sendSingleChat(wsA, clientMsgId, USER_B, "hello-offline");
+            String sendJson = singleChatJson(clientMsgId, USER_B, "hello-offline");
+            steps.add(step("A->S", "SINGLE_CHAT send (B offline)", sendJson));
+            wsA.sendText(sendJson, true).join();
 
             String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved)", ackSaved));
             String serverMsgId = requireField(ackSaved, "serverMsgId");
 
             // 此时 B 仍未上线，按设计 DB 应为 DROPPED；我们不在 Java 里访问 DB，
@@ -253,13 +289,17 @@ public class WsSmokeTest {
             WebSocket wsB = null;
             try {
                 wsB = connect(httpClient, tokenB, listenerB);
+                steps.add(step("B->S", "AUTH (B online)", authJson(tokenB)));
                 auth(wsB, tokenB, listenerB.queue);
 
                 // 期待：收到之前那条离线消息
-                await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
+                String delivered = await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
+                steps.add(step("S->B", "SINGLE_CHAT resend (from DROPPED)", delivered));
 
                 // 收件人确认收到：回 ACK_RECEIVED（ack_receive）
-                sendAckReceive(wsB, clientMsgId, serverMsgId, USER_A);
+                String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
+                steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+                wsB.sendText(ackReceiveJson, true).join();
                 Thread.sleep(800);
 
                 r.put("ok", true);
@@ -278,6 +318,78 @@ public class WsSmokeTest {
             return r;
         } finally {
             close(wsA);
+        }
+    }
+
+    /**
+     * 场景 4：定时任务补发（WsCron）
+     * 目标：
+     * - A/B 都在线
+     * - B 收到消息后“故意不回 ACK_RECEIVED”，让消息状态停留在 SAVED
+     * - 等待 WsCron 扫描到该条 SAVED 消息后再次下发（补发）
+     * - B 在补发后再回 ACK_RECEIVED，服务端推进状态为 RECEIVED
+     *
+     * 备注：
+     * - WsCron 当前扫描条件：status=SAVED && createdAt < now-1s && updatedAt < now-ackTimeoutMs
+     * - WsCron 调度间隔由配置控制：im.cron.scan-dropped.fixed-delay-ms（默认已调小，便于测试）
+     */
+    private static Map<String, Object> scenarioCronResend(String tokenA, String tokenB) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", false);
+        r.put("why", "验证定时任务补发：SAVED 且未收到 ACK_RECEIVED -> WsCron 补发 -> ACK_RECEIVED 推进状态");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
+
+        HttpClient httpClient = HttpClient.newHttpClient();
+        QueueListener listenerA = new QueueListener();
+        QueueListener listenerB = new QueueListener();
+
+        WebSocket wsA = null;
+        WebSocket wsB = null;
+        try {
+            wsA = connect(httpClient, tokenA, listenerA);
+            wsB = connect(httpClient, tokenB, listenerB);
+            steps.add(step("A->S", "AUTH", authJson(tokenA)));
+            auth(wsA, tokenA, listenerA.queue);
+            steps.add(step("B->S", "AUTH", authJson(tokenB)));
+            auth(wsB, tokenB, listenerB.queue);
+
+            String clientMsgId = "cron-" + UUID.randomUUID();
+            String sendJson = singleChatJson(clientMsgId, USER_B, "hello-cron-resend");
+            steps.add(step("A->S", "SINGLE_CHAT send", sendJson));
+            wsA.sendText(sendJson, true).join();
+
+            String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved)", ackSaved));
+            String serverMsgId = requireField(ackSaved, "serverMsgId");
+
+            // B 第一次收到（但不回 ACK_RECEIVED）
+            String delivered1 = await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
+            steps.add(step("S->B", "SINGLE_CHAT deliver #1 (no ACK_RECEIVED)", delivered1));
+
+            // 等待定时任务补发（给足够窗口：ackTimeout + cron interval + buffer）
+            long waitMs = Math.max(TIMEOUT_MS, 20000);
+            String delivered2 = await(listenerB.queue, waitMs, isSingleChat(clientMsgId, serverMsgId));
+            steps.add(step("S->B", "SINGLE_CHAT deliver #2 (cron resend)", delivered2));
+
+            // 收到补发后再回 ACK_RECEIVED
+            String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
+            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            wsB.sendText(ackReceiveJson, true).join();
+            Thread.sleep(800);
+
+            r.put("ok", true);
+            r.put("clientMsgId", clientMsgId);
+            r.put("serverMsgId", serverMsgId);
+            r.put("expected", "B 不回 ACK_RECEIVED 时应被 WsCron 补发；回 ACK 后 DB 状态应变为 RECEIVED(5)");
+            return r;
+        } catch (Exception e) {
+            r.put("reason", "常见原因：WsCron 扫描条件过严（ackTimeout/updatedAt）、调度间隔太长、服务端未启动定时任务");
+            r.put("error", String.valueOf(e));
+            return r;
+        } finally {
+            close(wsA);
+            close(wsB);
         }
     }
 
@@ -303,27 +415,31 @@ public class WsSmokeTest {
         await(inbox, TIMEOUT_MS, s -> "AUTH_OK".equalsIgnoreCase(extractString(s, "type")));
     }
 
-    private static void sendSingleChat(WebSocket wsA, String clientMsgId, long toUserId, String body) {
-        wsA.sendText(jsonObj(
+    private static String authJson(String token) {
+        return jsonObj("type", "AUTH", "token", token);
+    }
+
+    private static String singleChatJson(String clientMsgId, long toUserId, String body) {
+        return jsonObj(
                 "type", "SINGLE_CHAT",
                 "clientMsgId", clientMsgId,
                 "to", String.valueOf(toUserId),
                 "msgType", "TEXT",
                 "body", body,
                 "ts", String.valueOf(Instant.now().toEpochMilli())
-        ), true).join();
+        );
     }
 
-    private static void sendAckReceive(WebSocket ws, String clientMsgId, String serverMsgId, long toUserId) {
+    private static String ackReceiveJson(String clientMsgId, String serverMsgId, long toUserId) {
         // ackType 支持 received / ack_receive（服务端做了 ignoreCase）
-        ws.sendText(jsonObj(
+        return jsonObj(
                 "type", "ACK",
                 "clientMsgId", clientMsgId,
                 "serverMsgId", serverMsgId,
                 "to", String.valueOf(toUserId),
                 "ackType", "ack_receive",
                 "ts", String.valueOf(Instant.now().toEpochMilli())
-        ), true).join();
+        );
     }
 
     private static Predicate<String> isAckSaved(String clientMsgId) {
@@ -349,6 +465,20 @@ public class WsSmokeTest {
             throw new RuntimeException("missing field in ws json: " + field);
         }
         return v;
+    }
+
+    private static Map<String, Object> step(String direction, String step, String rawJson) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("atMs", Instant.now().toEpochMilli());
+        m.put("direction", direction);
+        m.put("step", step);
+        m.put("type", extractString(rawJson, "type"));
+        m.put("clientMsgId", extractString(rawJson, "clientMsgId"));
+        m.put("serverMsgId", extractString(rawJson, "serverMsgId"));
+        m.put("ackType", extractString(rawJson, "ackType"));
+        m.put("body", extractString(rawJson, "body"));
+        m.put("raw", rawJson);
+        return m;
     }
 
     private static void close(WebSocket ws) {
@@ -493,6 +623,18 @@ public class WsSmokeTest {
         if (v instanceof Number n) return String.valueOf(n);
         if (v instanceof String s) return jsonString(s);
         if (v instanceof Map<?, ?> m) return toJson((Map<String, Object>) m);
+        if (v instanceof Iterable<?> it) {
+            StringBuilder sb = new StringBuilder();
+            sb.append('[');
+            boolean first = true;
+            for (Object o : it) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append(toJsonValue(o));
+            }
+            sb.append(']');
+            return sb.toString();
+        }
         return jsonString(String.valueOf(v));
     }
 

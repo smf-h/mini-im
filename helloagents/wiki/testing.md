@@ -19,6 +19,7 @@
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario basic`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario idempotency`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario offline`
+  - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario cron`
 - 同时校验 DB 状态（示例使用 root 账号）：
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -CheckDb -DbPassword "<your_password>"`
   - DB 校验会把每个场景对应 `serverMsgId` 的 `t_message.status` 回填到输出 JSON 中
@@ -33,5 +34,6 @@
 输出字段说明：
 - `ok`：整体是否通过（任一场景失败则为 false）
 - `scenarios`：每个场景的结果（包含 `clientMsgId/serverMsgId/expected` 等）
+- `scenarios.*.steps`：每一步的消息内容与原因（包含 `raw` 原始 JSON，便于你对照客户端协议）
 - `scenarios.*.dbStatus`：开启 `-CheckDb` 时回填（例如 `5=RECEIVED`、`6=DROPPED`）
 - `explain`：ACK 与 DB 状态的含义（用于解释“为什么会这样返回”）

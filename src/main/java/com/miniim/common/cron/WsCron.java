@@ -16,6 +16,7 @@ import io.netty.channel.ChannelFuture;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -32,18 +33,21 @@ public class WsCron {
     private final SessionRegistry sessionRegistry;
     private final ObjectMapper objectMapper;
 
+    @Value("${im.message.ack-timeout-ms:5000}")
+    private long ackTimeoutMs;
+
     /**
      * 示例：定时扫描“需要补发/待处理”的消息。
      *
      * <p>这里用 DROPPED 作为示例（你当前单聊：对方离线就落库为 DROPPED）。
      * 真正补发一般建议在用户 AUTH 成功后触发；定时扫库适合作为兜底。</p>
      */
-    @Scheduled(fixedDelayString = "${im.cron.scan-dropped.fixed-delay-ms:30000}")
+    @Scheduled(fixedDelayString = "${im.cron.scan-dropped.fixed-delay-ms:5000}")
     public void scanDroppedMessages() {
         LocalDateTime now = LocalDateTime.now();
         // 轻微延迟窗口，避免扫到“刚落库还在处理”的消息（按需调整/删除）
         LocalDateTime cutoff = now.minusSeconds(1);
-        LocalDateTime retry = now.minusSeconds(20);
+        LocalDateTime retry = now.minusNanos(ackTimeoutMs * 1_000_000L);
 
         LambdaQueryWrapper<MessageEntity> qw = new LambdaQueryWrapper<>();
         qw.eq(MessageEntity::getStatus, MessageStatus.SAVED)
@@ -63,7 +67,7 @@ public class WsCron {
             Channel channelTo=sessionRegistry.getChannel(toUserId);
             if (channelTo == null||!channelTo.isActive()) {
                 LambdaUpdateWrapper<MessageEntity> updateWrapper = new LambdaUpdateWrapper<>();
-                updateWrapper.eq(msg.getServerMsgId()!=null,MessageEntity::getServerMsgId, msg.getServerMsgId());
+                updateWrapper.eq(MessageEntity::getId, msg.getId());
                 updateWrapper.set(MessageEntity::getStatus, MessageStatus.DROPPED);
                 messageService.update(updateWrapper);
                 continue;
