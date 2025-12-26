@@ -15,7 +15,6 @@ import com.miniim.domain.enums.MessageType;
 import com.miniim.domain.service.ConversationService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatService;
-import com.miniim.domain.service.ChatDeliveryService;
 import com.miniim.domain.service.UserService;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
@@ -49,14 +48,13 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private final Executor dbExecutor;
     private final ClientMsgIdIdempotency idempotency;
     private final UserService userService;
-    private final ChatDeliveryService chatDeliveryService;
     public WsFrameHandler(ObjectMapper objectMapper,
                           JwtService jwtService,
                           SessionRegistry sessionRegistry,
                           MessageService messageService,
                           ConversationService conversationService,
                           SingleChatService singleChatService,
-                          Executor dbExecutor, ClientMsgIdIdempotency idempotency, UserService userService, ChatDeliveryService chatDeliveryService) {
+                          Executor dbExecutor, ClientMsgIdIdempotency idempotency, UserService userService) {
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
         this.sessionRegistry = sessionRegistry;
@@ -66,7 +64,6 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.dbExecutor = dbExecutor;
         this.idempotency = idempotency;
         this.userService = userService;
-        this.chatDeliveryService = chatDeliveryService;
     }
 
     @Override
@@ -265,15 +262,6 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             ctx.close();
             return false;
         }
-        if (!validateAck(ctx, msg)) {
-            return false;
-        }
-        msg.setFrom(fromUserId);
-        msg.setTs(Instant.now().toEpochMilli());
-        Long toUserId = msg.getTo();
-        // 仅在本端处理 ACK：写入 ack + 推进状态；必要时也可转发给原发送方（后续扩展）
-        return chatDeliveryService.handleReceiverAck(fromUserId, toUserId, msg.getClientMsgId(), msg.getServerMsgId(), msg.getAckType());
-}
 
         if (!validateAck(ctx, msg)) {
             return false;
@@ -288,13 +276,13 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             writeError(ctx, "ack_target_offline", msg.getClientMsgId(), msg.getServerMsgId());
             return false;
         }
-        if(msg.ackType.equals(AckType.RECEIVED.getDesc())){
-           return handleAckReceived(msg, fromUserId, toUserId);
+
+        if ("received".equalsIgnoreCase(msg.ackType) || "ack_receive".equalsIgnoreCase(msg.ackType)) {
+            return handleAckReceived(msg, fromUserId, toUserId);
         }
-        //未处理其他类型
+
+        // 未处理其他类型
         return false;
-//        write(target, msg);
-//        writeAck(ctx, fromUserId, msg.getClientMsgId(), msg.getServerMsgId(), "ACK_OK");
     }
 
     private boolean handleAckReceived(WsEnvelope msg, Long fromUserId, Long toUserId) {
@@ -333,8 +321,6 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
             sessionRegistry.bind(ctx.channel(), userId, expMs);
             writeAuthOk(ctx, userId);
-            // 登录后补拉未送达消息（异步）
-            ctx.executor().execute(() -> chatDeliveryService.deliverPendingForUser(userId));
         } catch (Exception e) {
             writeAuthFail(ctx, "invalid_token");
             ctx.close();

@@ -45,7 +45,7 @@ public class WsCron {
         LocalDateTime cutoff = now.minusSeconds(1);
 
         LambdaQueryWrapper<MessageEntity> qw = new LambdaQueryWrapper<>();
-        qw.in(MessageEntity::getStatus, MessageStatus.SAVED, MessageStatus.DROPPED)
+        qw.eq(MessageEntity::getStatus, MessageStatus.SAVED)
                 .lt(MessageEntity::getCreatedAt, cutoff)
                 .orderByAsc(MessageEntity::getId)
                 .last("limit 100");
@@ -67,21 +67,13 @@ public class WsCron {
             envelope.setFrom(msg.getFromUserId());
             envelope.setBody(msg.getContent());
             envelope.setClientMsgId(msg.getClientMsgId());
-            envelope.setType("SINGLE_CHAT"); // TODO: 根据 chatType 选择
+            envelope.setType(msg.getChatType().getDesc());
             envelope.setServerMsgId(msg.getServerMsgId());
             envelope.setTs(Instant.now().toEpochMilli());
             channelTo.eventLoop().execute(()-> {
                 try {
                      String json = objectMapper.writeValueAsString(envelope);
                     ChannelFuture f = channelTo.writeAndFlush(new TextWebSocketFrame(json));
-                    f.addListener(w -> {
-                        if (w.isSuccess()) {
-                            MessageEntity patch = new MessageEntity();
-                            patch.setId(msg.getId());
-                            patch.setStatus(MessageStatus.DELIVERED);
-                            messageService.updateById(patch);
-                        }
-                    });
                 } catch (JsonProcessingException e) {
                     channelTo.newFailedFuture(e);
                     throw new RuntimeException(e);
