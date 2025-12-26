@@ -5,6 +5,10 @@
 *.log
 logs/
 
+# Local agent/run artifacts
+.codex-run/
+scripts/ws-smoke-test/.out/
+
 # Maven
 target/
 !.mvn/wrapper/maven-wrapper.jar

@@ -4,6 +4,8 @@ param(
   [long]$UserA = 10001,
   [long]$UserB = 10002,
   [int]$TimeoutMs = 8000,
+  [ValidateSet("all","basic","idempotency","offline")]
+  [string]$Scenario = "all",
   [switch]$CheckDb,
   [string]$DbHost = "127.0.0.1",
   [string]$DbName = "mini_im",
@@ -13,6 +15,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Entry script for WS smoke tests.
+# Note: keep this file ASCII-safe for Windows PowerShell 5.1 (UTF-8 no BOM can break parsing when it contains non-ASCII string literals).
+
+# 1) Quick check: WS port reachable
+$wsUri = [Uri]$WsUrl
+$wsHost = $wsUri.Host
+$wsPort = $wsUri.Port
+if ($wsPort -lt 0) {
+  throw "WsUrl must include a port, e.g. ws://127.0.0.1:9001/ws"
+}
+if (-not (Test-NetConnection -ComputerName $wsHost -Port $wsPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
+  throw "Cannot connect to $WsUrl (is the server running?)"
+}
+
+# 2) Compile + run Java test
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $javaFile = Join-Path $scriptDir "WsSmokeTest.java"
 $outDir = Join-Path $scriptDir ".out"
@@ -20,18 +37,25 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 Push-Location $scriptDir
 try {
-  javac -d "$outDir" "$javaFile"
+  javac -encoding UTF-8 -d "$outDir" "$javaFile"
+
   $json = java -cp "$outDir" `
     -Dws="$WsUrl" `
     -DjwtSecret="$JwtSecret" `
     -DuserA="$UserA" `
     -DuserB="$UserB" `
     -DtimeoutMs="$TimeoutMs" `
+    -Dscenario="$Scenario" `
     WsSmokeTest
 
   $result = $json | ConvertFrom-Json
 
+  # 3) Optional: query DB status via mysql CLI and attach to output JSON
   if ($CheckDb) {
+    if (-not (Get-Command mysql -ErrorAction SilentlyContinue)) {
+      throw "mysql CLI not found in PATH"
+    }
+
     if ([string]::IsNullOrWhiteSpace($DbPassword)) {
       if (-not [string]::IsNullOrWhiteSpace($env:MYSQL_PWD)) {
         $DbPassword = $env:MYSQL_PWD
@@ -39,16 +63,25 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($DbPassword)) {
-      throw "CheckDb 需要提供 -DbPassword 或设置环境变量 MYSQL_PWD"
+      throw "CheckDb needs -DbPassword or env MYSQL_PWD"
     }
 
     $env:MYSQL_PWD = $DbPassword
-    $serverMsgId = [string]$result.serverMsgId
-    $status = mysql -u "$DbUser" -h "$DbHost" -N -s -D "$DbName" -e "SELECT status FROM t_message WHERE server_msg_id='${serverMsgId}' LIMIT 1;"
-    $result | Add-Member -NotePropertyName "dbStatus" -NotePropertyValue ($status.Trim()) -Force
+
+    if ($null -ne $result.scenarios) {
+      foreach ($prop in $result.scenarios.PSObject.Properties) {
+        $scenarioObj = $prop.Value
+        if ($null -eq $scenarioObj) { continue }
+        if ($null -eq $scenarioObj.serverMsgId) { continue }
+
+        $serverMsgId = [string]$scenarioObj.serverMsgId
+        $status = mysql -u "$DbUser" -h "$DbHost" -N -s -D "$DbName" -e "SELECT status FROM t_message WHERE server_msg_id='${serverMsgId}' LIMIT 1;"
+        $scenarioObj | Add-Member -NotePropertyName "dbStatus" -NotePropertyValue ($status.Trim()) -Force
+      }
+    }
   }
 
-  $result | ConvertTo-Json -Depth 5
+  $result | ConvertTo-Json -Depth 10
 } finally {
   Pop-Location
 }

@@ -309,6 +309,9 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         if (sessionRegistry.isAuthed(ctx.channel())) {
             Long uid = ctx.channel().attr(SessionRegistry.ATTR_USER_ID).get();
             writeAuthOk(ctx, uid == null ? -1 : uid);
+            if (uid != null) {
+                resendDroppedMessages(ctx, uid);
+            }
             return;
         }
 
@@ -330,40 +333,54 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             ctx.close();
             return;
         }
-            LambdaQueryWrapper<MessageEntity> queryWrapper = new LambdaQueryWrapper<>();
-            queryWrapper.eq(MessageEntity::getStatus, MessageStatus.DROPPED).eq(MessageEntity::getToUserId,userId).orderByAsc(MessageEntity::getId).last("limit 100");
-                CompletableFuture<Void> saveFuture = CompletableFuture.runAsync(() ->{
-                    List<MessageEntity> list = messageService.list(queryWrapper);
-                    for (MessageEntity msgEntity : list) {
-                        Long userToId=msgEntity.getToUserId();
-                        Channel target = sessionRegistry.getChannel(userToId);
-                        if (target == null || !target.isActive()) {
-                            continue;
+
+        resendDroppedMessages(ctx, userId);
+
+
+
+
+    }
+
+    private void resendDroppedMessages(ChannelHandlerContext ctx, Long userId) {
+        LambdaQueryWrapper<MessageEntity> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(MessageEntity::getStatus, MessageStatus.DROPPED)
+                .eq(MessageEntity::getToUserId, userId)
+                .orderByAsc(MessageEntity::getId)
+                .last("limit 100");
+
+        CompletableFuture.runAsync(() -> {
+            List<MessageEntity> list = messageService.list(queryWrapper);
+            Channel target = ctx.channel();
+            if (target == null || !target.isActive()) {
+                return;
+            }
+            for (MessageEntity msgEntity : list) {
+                msgEntity.setStatus(MessageStatus.SAVED);
+                messageService.updateById(msgEntity);
+
+                WsEnvelope envelope = new WsEnvelope();
+                envelope.setType(msgEntity.getChatType().getDesc());
+                envelope.setFrom(msgEntity.getFromUserId());
+                envelope.setTs(Instant.now().toEpochMilli());
+                envelope.setClientMsgId(msgEntity.getClientMsgId());
+                envelope.setTo(userId);
+                envelope.setServerMsgId(msgEntity.getServerMsgId());
+                envelope.setBody(msgEntity.getContent());
+                envelope.setMsgType(msgEntity.getMsgType().getDesc());
+
+                target.eventLoop().execute(() -> {
+                    ChannelFuture write = write(target, envelope);
+                    write.addListener(w -> {
+                        if (!w.isSuccess()) {
+                            log.error("write error:{}", w.cause().toString());
                         }
-                        msgEntity.setStatus(MessageStatus.SAVED);
-                        messageService.updateById(msgEntity);
-                        WsEnvelope envelope = new WsEnvelope();
-                        envelope.setType(msgEntity.getChatType().getDesc());
-                        envelope.setFrom(msgEntity.getFromUserId());
-                        envelope.setTs(Instant.now().toEpochMilli());
-                        envelope.setClientMsgId(msgEntity.getClientMsgId());
-                        envelope.setTo(userToId);
-                        envelope.setServerMsgId(msgEntity.getServerMsgId());
-                        envelope.setBody(msgEntity.getContent());
-                        envelope.setMsgType(msgEntity.getMsgType().getDesc());
-                        target.eventLoop().execute(() -> {
-                            ChannelFuture write = write(target, envelope);
-                            write.addListener(w->{
-                                if (!w.isSuccess()) {
-                                    log.error("write error:{}", w.cause().toString());
-                                }
-                            });
-                        });
-                }}, dbExecutor).orTimeout(3,TimeUnit.SECONDS);
-
-
-
-
+                    });
+                });
+            }
+        }, dbExecutor).orTimeout(3, TimeUnit.SECONDS).exceptionally(e -> {
+            log.error("resend dropped messages failed: {}", e.toString());
+            return null;
+        });
     }
 
     private ChannelFuture handlePing(ChannelHandlerContext ctx) {
