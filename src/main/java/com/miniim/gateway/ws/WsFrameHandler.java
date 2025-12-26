@@ -1,13 +1,13 @@
 package com.miniim.gateway.ws;
 
 import cn.hutool.core.bean.BeanUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.miniim.auth.service.JwtService;
-import com.miniim.domain.entity.ConversationEntity;
 import com.miniim.domain.entity.MessageEntity;
-import com.miniim.domain.entity.SingleChatEntity;
 import com.miniim.domain.enums.AckType;
 import com.miniim.domain.enums.ChatType;
 import com.miniim.domain.enums.MessageStatus;
@@ -15,11 +15,11 @@ import com.miniim.domain.enums.MessageType;
 import com.miniim.domain.service.ConversationService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatService;
+import com.miniim.domain.service.UserService;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelPromise;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.timeout.IdleState;
@@ -29,6 +29,7 @@ import io.jsonwebtoken.Jws;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -46,13 +47,14 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private  final SingleChatService singleChatService;
     private final Executor dbExecutor;
     private final ClientMsgIdIdempotency idempotency;
+    private final UserService userService;
     public WsFrameHandler(ObjectMapper objectMapper,
                           JwtService jwtService,
                           SessionRegistry sessionRegistry,
                           MessageService messageService,
                           ConversationService conversationService,
                           SingleChatService singleChatService,
-                          Executor dbExecutor, ClientMsgIdIdempotency idempotency) {
+                          Executor dbExecutor, ClientMsgIdIdempotency idempotency, UserService userService) {
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
         this.sessionRegistry = sessionRegistry;
@@ -61,6 +63,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.singleChatService = singleChatService;
         this.dbExecutor = dbExecutor;
         this.idempotency = idempotency;
+        this.userService = userService;
     }
 
     @Override
@@ -157,7 +160,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         messageEntity.setToUserId(toUserId);
         MessageType messageType = MessageType.fromString(msg.getMsgType());
         messageEntity.setMsgType(messageType == null ? MessageType.TEXT : messageType);
-        messageEntity.setStatus(dropped ? MessageStatus.DROPPED : MessageStatus.SENT);
+        messageEntity.setStatus(dropped ? MessageStatus.DROPPED : MessageStatus.SAVED);
         messageEntity.setContent(msg.getBody());
         messageEntity.setClientMsgId(msg.getClientMsgId());
         base.setServerMsgId(serverMsgId);
@@ -196,13 +199,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                 future.addListener(f -> {
                     if (f.isSuccess()) {
                         // 更新消息状态为 DELIVERED
-                        CompletableFuture.runAsync(() -> {
-                            MessageEntity newMessageEntity = new MessageEntity();
-                            BeanUtil.copyProperties(messageEntity, newMessageEntity);
-                            newMessageEntity.setStatus(MessageStatus.DELIVERED);
-                            messageService.updateById(newMessageEntity);
-                        }, dbExecutor).orTimeout(3,TimeUnit.SECONDS);
-                        ctx.executor().execute(() -> writeAck(ctx, fromUserId, base.getClientMsgId(), serverMsgId, "DELIVERED"));
+                        // deliver 状态当前不启用：消息保持 SAVED，直到收到收件人 ACK_RECEIVED 才推进到 RECEIVED
                     } else {
                         log.error("deliver message to user {} failed: {}", toUserId, f.cause().toString());
                         ctx.executor().execute(() -> writeError(ctx, "deliver_failed", base.getClientMsgId(), serverMsgId));
@@ -257,11 +254,11 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         if (fromUserId == null) {
             writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
             ctx.close();
-            return;
+            return ;
         }
 
         if (!validateAck(ctx, msg)) {
-            return;
+            return ;
         }
 
         msg.setFrom(fromUserId);
@@ -269,13 +266,33 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
         Long toUserId = msg.getTo();
         Channel target = sessionRegistry.getChannel(toUserId);
-        if (target == null || !target.isActive()) {
-            writeError(ctx, "ack_target_offline", msg.getClientMsgId(), msg.getServerMsgId());
-            return;
+//        if (target == null || !target.isActive()) {
+//            writeError(ctx, "ack_target_offline", msg.getClientMsgId(), msg.getServerMsgId());
+//            return false;
+//        }
+
+        if ("received".equalsIgnoreCase(msg.ackType) || "ack_receive".equalsIgnoreCase(msg.ackType)) {
+             handleAckReceived(msg, fromUserId, toUserId);
         }
 
-        write(target, msg);
-        writeAck(ctx, fromUserId, msg.getClientMsgId(), msg.getServerMsgId(), "ACK_OK");
+        // 未处理其他类型
+        return ;
+    }
+
+    private void handleAckReceived(WsEnvelope msg, Long fromUserId, Long toUserId) {
+        LambdaUpdateWrapper<MessageEntity> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(MessageEntity::getClientMsgId, msg.getClientMsgId());
+        updateWrapper.eq(MessageEntity::getServerMsgId, msg.getServerMsgId());
+        updateWrapper.eq(MessageEntity::getFromUserId, toUserId);
+        updateWrapper.eq(MessageEntity::getToUserId, fromUserId);
+        updateWrapper.set(MessageEntity::getStatus, MessageStatus.RECEIVED);
+        Boolean result;
+        CompletableFuture<Boolean> completableFuture = CompletableFuture.supplyAsync(() -> messageService.update(updateWrapper), dbExecutor).orTimeout(3, TimeUnit.SECONDS)
+                .exceptionally(e -> {
+                    log.error("update message failed: {}", e.toString());
+                    return null;
+                });
+
     }
 
     private void handleAuth(ChannelHandlerContext ctx, WsEnvelope msg) {
@@ -286,6 +303,9 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         if (sessionRegistry.isAuthed(ctx.channel())) {
             Long uid = ctx.channel().attr(SessionRegistry.ATTR_USER_ID).get();
             writeAuthOk(ctx, uid == null ? -1 : uid);
+            if (uid != null) {
+                resendDroppedMessages(ctx, uid);
+            }
             return;
         }
 
@@ -294,9 +314,10 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             ctx.close();
             return;
         }
+        Long userId;
         try {
             Jws<Claims> jws = jwtService.parseAccessToken(msg.token);
-            long userId = jwtService.getUserId(jws.getPayload());
+             userId = jwtService.getUserId(jws.getPayload());
             Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
 
             sessionRegistry.bind(ctx.channel(), userId, expMs);
@@ -304,7 +325,56 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         } catch (Exception e) {
             writeAuthFail(ctx, "invalid_token");
             ctx.close();
+            return;
         }
+
+        resendDroppedMessages(ctx, userId);
+
+
+
+
+    }
+
+    private void resendDroppedMessages(ChannelHandlerContext ctx, Long userId) {
+        LambdaQueryWrapper<MessageEntity> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(MessageEntity::getStatus, MessageStatus.DROPPED)
+                .eq(MessageEntity::getToUserId, userId)
+                .orderByAsc(MessageEntity::getId)
+                .last("limit 100");
+
+        CompletableFuture.runAsync(() -> {
+            List<MessageEntity> list = messageService.list(queryWrapper);
+            Channel target = ctx.channel();
+            if (target == null || !target.isActive()) {
+                return;
+            }
+            for (MessageEntity msgEntity : list) {
+                msgEntity.setStatus(MessageStatus.SAVED);
+                messageService.updateById(msgEntity);
+
+                WsEnvelope envelope = new WsEnvelope();
+                envelope.setType(msgEntity.getChatType().getDesc());
+                envelope.setFrom(msgEntity.getFromUserId());
+                envelope.setTs(Instant.now().toEpochMilli());
+                envelope.setClientMsgId(msgEntity.getClientMsgId());
+                envelope.setTo(userId);
+                envelope.setServerMsgId(msgEntity.getServerMsgId());
+                envelope.setBody(msgEntity.getContent());
+                envelope.setMsgType(msgEntity.getMsgType().getDesc());
+
+                target.eventLoop().execute(() -> {
+                    ChannelFuture write = write(target, envelope);
+                    write.addListener(w -> {
+                        if (!w.isSuccess()) {
+                            log.error("write error:{}", w.cause().toString());
+                        }
+                    });
+                });
+            }
+        }, dbExecutor).orTimeout(3, TimeUnit.SECONDS).exceptionally(e -> {
+            log.error("resend dropped messages failed: {}", e.toString());
+            return null;
+        });
     }
 
     private ChannelFuture handlePing(ChannelHandlerContext ctx) {
@@ -475,6 +545,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
+
         sessionRegistry.unbind(ctx.channel());
     }
     public void channelActive(ChannelHandlerContext ctx) {
@@ -488,3 +559,5 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         ctx.close();
     }
 }
+
+

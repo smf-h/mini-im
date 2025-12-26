@@ -10,6 +10,9 @@
 - CI: 新增 GitHub Actions（Java 17 + Maven test）
 - 分支保护: master 启用必需PR审核与状态检查
 
+### 新增
+- 单聊（WS）：SAVED 落库确认、ACK_RECEIVED 接收确认、定时补发与离线标记（实现细节以代码为准）
+
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 
 ### 新增

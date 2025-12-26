@@ -85,3 +85,30 @@ CREATE TABLE IF NOT EXISTS t_message_ack (
   KEY idx_ack_user (user_id),
   KEY idx_ack_msg (message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 好友关系（一对好友只存一条记录：user1_id=min(A,B), user2_id=max(A,B)）
+CREATE TABLE IF NOT EXISTS t_friend_relation (
+  id BIGINT NOT NULL PRIMARY KEY,
+  user1_id BIGINT NOT NULL,
+  user2_id BIGINT NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uk_friend_relation_pair (user1_id, user2_id),
+  KEY idx_friend_relation_user1 (user1_id),
+  KEY idx_friend_relation_user2 (user2_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 好友申请
+CREATE TABLE IF NOT EXISTS t_friend_request (
+  id BIGINT NOT NULL PRIMARY KEY,
+  from_user_id BIGINT NOT NULL,
+  to_user_id BIGINT NOT NULL,
+  content VARCHAR(256) NULL COMMENT '申请验证信息',
+  status TINYINT NOT NULL DEFAULT 0 COMMENT '0=PENDING,1=ACCEPTED,2=REJECTED,3=CANCELED,4=EXPIRED',
+  handled_at DATETIME(3) NULL COMMENT '处理时间（同意/拒绝/取消/过期）',
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  KEY idx_friend_request_to_status_time (to_user_id, status, created_at),
+  KEY idx_friend_request_from_time (from_user_id, created_at),
+  KEY idx_friend_request_from_to_status (from_user_id, to_user_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

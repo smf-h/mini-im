@@ -6,6 +6,7 @@ import com.miniim.domain.entity.ConversationEntity;
 import com.miniim.domain.service.ConversationService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatService;
+import com.miniim.domain.service.UserService;
 import com.miniim.gateway.config.GatewayProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.bootstrap.ServerBootstrap;
@@ -42,6 +43,7 @@ public class NettyWsServer implements SmartLifecycle {
     private  final SingleChatService singleChatService;
     private final Executor imDbExecutor;
     private final ClientMsgIdIdempotency clientMsgIdIdempotency;
+    private final UserService userService;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -56,7 +58,7 @@ public class NettyWsServer implements SmartLifecycle {
                          ConversationService conversationService,
                          SingleChatService singleChatService,
                          @Qualifier("imDbExecutor") Executor imDbExecutor,
-                         ClientMsgIdIdempotency clientMsgIdIdempotency) {
+                         ClientMsgIdIdempotency clientMsgIdIdempotency, UserService userService) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
@@ -66,6 +68,7 @@ public class NettyWsServer implements SmartLifecycle {
         this.singleChatService = singleChatService;
         this.imDbExecutor = imDbExecutor;
         this.clientMsgIdIdempotency = clientMsgIdIdempotency;
+        this.userService = userService;
     }
 
     @Override
@@ -112,7 +115,7 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new WebSocketServerProtocolHandler(props.path(), null, true));
 
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
-                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, conversationService, singleChatService, imDbExecutor, clientMsgIdIdempotency));
+                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, conversationService, singleChatService, imDbExecutor, clientMsgIdIdempotency, userService));
                     }
                 }
                 );
@@ -166,3 +169,4 @@ public class NettyWsServer implements SmartLifecycle {
         callback.run();
     }
 }
+
