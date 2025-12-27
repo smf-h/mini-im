@@ -1,6 +1,6 @@
 # 测试说明
 
-## WebSocket 单聊冒烟（不依赖 Redis）
+## WebSocket 单聊冒烟（核心不依赖 Redis）
 
 用于快速验证：`SINGLE_CHAT` 落库 ACK（saved）与接收 ACK（ack_receive）联动是否正常，以及 DB 状态是否推进到 `RECEIVED`。
 
@@ -13,16 +13,22 @@
 - （可选）本机可访问 MySQL（用于校验 `t_message.status`）
 
 运行：
-- 跑全部场景（默认）：`basic + idempotency + offline`
+- 跑全部场景（默认）：`basic + idempotency + offline + cron + auth`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1`
 - 指定场景：
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario basic`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario idempotency`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario offline`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario cron`
+- 鉴权全链路（握手鉴权 + AUTH 帧 + token 过期断连）：
+  - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario auth -AuthTokenTtlSeconds 2`
+  - 说明：auth 场景会覆盖 `REAUTH`（续期）——旧 token 过期后先 REAUTH，再验证 PING 仍可用，直到新 token 过期
+  - 注意：如果你刚改了服务端代码（新增 `REAUTH`），务必重启服务端进程后再跑脚本，否则会因为服务端尚未加载新逻辑而失败
 - 同时校验 DB 状态（示例使用 root 账号）：
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -CheckDb -DbPassword "<your_password>"`
-  - DB 校验会把每个场景对应 `serverMsgId` 的 `t_message.status` 回填到输出 JSON 中
+  - DB 校验会把每个场景对应 `serverMsgId` 的 `t_message` 记录（含 `status/updatedAt/from/to/...`）回填到输出 JSON 中
+- （可选）打印 Redis 路由 key（需要本机有 `redis-cli`）：
+  - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -CheckRedis`
 
 可调参数：
 - `-WsUrl`：默认 `ws://127.0.0.1:9001/ws`
@@ -30,10 +36,18 @@
 - `-UserA/-UserB`：默认 `10001/10002`
 - `-TimeoutMs`：默认 `8000`
 - `-Scenario`：默认 `all`
+- `-AuthTokenTtlSeconds`：鉴权场景专用（用于验证 `token_expired`）
+- `-RedisHost/-RedisPort/-RedisPassword`：Redis 查询专用（密码不会输出；但传参会出现在本机进程参数里，介意的话建议用无密码本地 Redis）
 
 输出字段说明：
 - `ok`：整体是否通过（任一场景失败则为 false）
+- `vars`：关键变量快照（ws/scenario/userA/userB/timeoutMs/authTokenTtlSeconds/redisHost/redisPort）
 - `scenarios`：每个场景的结果（包含 `clientMsgId/serverMsgId/expected` 等）
 - `scenarios.*.steps`：每一步的消息内容与原因（包含 `raw` 原始 JSON，便于你对照客户端协议）
 - `scenarios.*.dbStatus`：开启 `-CheckDb` 时回填（例如 `5=RECEIVED`、`6=DROPPED`）
+- `scenarios.*.dbRow`：开启 `-CheckDb` 时回填的 `t_message` 关键字段快照
+- `redis`：开启 `-CheckRedis` 时回填（主要看 `im:gw:route:<userId>` 的 value/ttl）
 - `explain`：ACK 与 DB 状态的含义（用于解释“为什么会这样返回”）
+
+敏感信息处理：
+- `steps.*.raw` 会对 `token` 字段做脱敏（不会输出 token 明文）。

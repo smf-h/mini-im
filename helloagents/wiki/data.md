@@ -12,6 +12,11 @@
 - `t_message`
 - `t_message_ack`
 
+### t_message 查询习惯（单聊）
+
+- 推荐用 `single_chat_id + id` 做游标分页：`where single_chat_id = ? and id < lastId order by id desc limit ?`
+- schema 已包含组合索引：`idx_msg_single_id_id (single_chat_id, id)`（适合上述查询）
+
 ---
 
 ## 领域实体与映射

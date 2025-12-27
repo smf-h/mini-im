@@ -9,6 +9,14 @@
 
 实现位置：`com.miniim.auth.web.AuthController`
 
+### Single Chat Messages（单聊消息查询）
+- `GET /single-chat/message/cursor?peerUserId=xxx&limit=20&lastId=yyy`
+  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+- `GET /single-chat/message/list?peerUserId=xxx&pageNo=1&pageSize=20`
+  - 语义：普通分页（返回 MyBatis-Plus `Page`）
+
+实现位置：`com.miniim.domain.controller.SingleChatMessageController`
+
 ---
 
 ## WebSocket

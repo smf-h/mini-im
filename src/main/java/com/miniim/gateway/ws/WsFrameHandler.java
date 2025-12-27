@@ -70,11 +70,12 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) throws Exception {
         // 我们约定：客户端发来的每一个 TextWebSocketFrame 都是一段 JSON
         // 用 WsEnvelope 这个“信封对象”承载：type + token + from/to + body + ts ...
-        log.info("received frame {}", frame.text());
+        log.info("received frame {}", redactToken(frame.text()));
         WsEnvelope msg;
         try {
             msg = objectMapper.readValue(frame.text(), WsEnvelope.class);
-            log.info("received frame {}", msg.toString());
+            log.info("received envelope type={}, clientMsgId={}, serverMsgId={}, from={}, to={}",
+                    msg.getType(), msg.getClientMsgId(), msg.getServerMsgId(), msg.getFrom(), msg.getTo());
         } catch (Exception e) {
             writeError(ctx, "bad_json");
             return;
@@ -85,8 +86,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             return;
         }
 
-        // 除了 AUTH（兼容旧客户端）以外，其他消息都要求：已鉴权且 accessToken 未过期。
-        if (!"AUTH".equals(msg.type)) {
+        // 除了 AUTH/REAUTH 以外，其他消息都要求：已鉴权且 accessToken 未过期。
+        if (!"AUTH".equals(msg.type) && !"REAUTH".equals(msg.type)) {
             if (!sessionRegistry.isAuthed(ctx.channel())) {
                 writeError(ctx, "unauthorized");
                 ctx.close();
@@ -101,6 +102,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
         switch (msg.type) {
             case "AUTH" -> handleAuth(ctx, msg);
+            case "REAUTH" -> handleReauth(ctx, msg);
             case "PING" -> handlePing(ctx);
             case "SINGLE_CHAT" -> handleSingleChat(ctx, msg);
             case "GROUP_CHAT" -> handleGroupChat(ctx, msg);
@@ -109,6 +111,23 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                 writeError(ctx, "not_implemented", msg.getClientMsgId(), null);
             }
         }
+    }
+
+    private static String redactToken(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String needle = "\"token\":\"";
+        int idx = raw.indexOf(needle);
+        if (idx < 0) {
+            return raw;
+        }
+        int start = idx + needle.length();
+        int end = raw.indexOf('"', start);
+        if (end < 0) {
+            return raw;
+        }
+        return raw.substring(0, start) + "***" + raw.substring(end);
     }
 
     private void handleSingleChat(ChannelHandlerContext ctx, WsEnvelope msg) {
@@ -333,6 +352,48 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
 
 
+    }
+
+    /**
+     * reauth：在连接不断开的情况下刷新 accessToken 过期时间。
+     *
+     * <p>约束：</p>
+     * <ul>
+     *   <li>必须已绑定 userId（握手鉴权或 AUTH 已完成）</li>
+     *   <li>新 token 的 uid 必须与当前连接一致</li>
+     *   <li>成功后仅刷新 expMs，不触发离线补发</li>
+     * </ul>
+     */
+    private void handleReauth(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel ch = ctx.channel();
+        Long boundUid = ch.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (boundUid == null) {
+            writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
+            ctx.close();
+            return;
+        }
+        if (msg.token == null || msg.token.isBlank()) {
+            writeAuthFail(ctx, "missing_token");
+            ctx.close();
+            return;
+        }
+
+        try {
+            Jws<Claims> jws = jwtService.parseAccessToken(msg.token);
+            long uid = jwtService.getUserId(jws.getPayload());
+            if (!boundUid.equals(uid)) {
+                writeError(ctx, "reauth_uid_mismatch", msg.getClientMsgId(), msg.getServerMsgId());
+                ctx.close();
+                return;
+            }
+
+            Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
+            sessionRegistry.bind(ch, uid, expMs);
+            writeAuthOk(ctx, uid);
+        } catch (Exception e) {
+            writeAuthFail(ctx, "invalid_token");
+            ctx.close();
+        }
     }
 
     private void resendDroppedMessages(ChannelHandlerContext ctx, Long userId) {

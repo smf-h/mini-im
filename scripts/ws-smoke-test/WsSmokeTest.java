@@ -47,7 +47,9 @@ import javax.crypto.spec.SecretKeySpec;
  * -DjwtSecret=change-me-please-change-me-please-change-me
  * -DuserA=10001 -DuserB=10002
  * -DtimeoutMs=8000
- * -Dscenario=basic|idempotency|offline|cron|all
+ * -Dscenario=basic|idempotency|offline|cron|auth|all
+ * -DauthTokenTtlSeconds=2 (auth only)
+ * -DredisHost=127.0.0.1 -DredisPort=6379 -DredisPassword= (optional; for auth scenario)
  */
 public class WsSmokeTest {
 
@@ -59,6 +61,11 @@ public class WsSmokeTest {
 
     private static final long TIMEOUT_MS = Long.parseLong(System.getProperty("timeoutMs", "8000"));
     private static final String SCENARIO = System.getProperty("scenario", "all").trim().toLowerCase();
+    private static final long AUTH_TOKEN_TTL_SECONDS = Long.parseLong(System.getProperty("authTokenTtlSeconds", "2"));
+
+    private static final String REDIS_HOST = System.getProperty("redisHost", "127.0.0.1");
+    private static final int REDIS_PORT = Integer.parseInt(System.getProperty("redisPort", "6379"));
+    private static final String REDIS_PASSWORD = System.getProperty("redisPassword", "");
 
     public static void main(String[] args) throws Exception {
         String tokenA = issueAccessToken(USER_A);
@@ -66,7 +73,19 @@ public class WsSmokeTest {
 
         // 为了输出更可读且稳定，使用 LinkedHashMap 固定字段顺序
         Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, Object> vars = new LinkedHashMap<>();
+        vars.put("ws", WS_URL);
+        vars.put("scenario", SCENARIO);
+        vars.put("userA", USER_A);
+        vars.put("userB", USER_B);
+        vars.put("timeoutMs", TIMEOUT_MS);
+        vars.put("authTokenTtlSeconds", AUTH_TOKEN_TTL_SECONDS);
+        vars.put("redisHost", REDIS_HOST);
+        vars.put("redisPort", REDIS_PORT);
+        out.put("vars", vars);
         Map<String, Object> explain = new LinkedHashMap<>();
+        explain.put("auth.handshake", "WS handshake validates accessToken (Authorization/query); failures are 401 missing_access_token/invalid_access_token");
+        explain.put("auth.frame", "WS AUTH/REAUTH frame binds session or refreshes expMs; AUTH_OK means token parsed and session bound/refreshed");
         explain.put("ackType.saved", "服务端确认消息已落库（写库成功），发件人可认为“已保存”，可用于重发幂等");
         explain.put("ackType.ack_receive/received", "收件人确认“已收到消息帧”，服务端可推进消息状态到 RECEIVED");
         explain.put("wsFrame.ERROR", "协议/鉴权/参数错误等，reason 字段给出原因（unauthorized/token_expired/...)");
@@ -91,6 +110,9 @@ public class WsSmokeTest {
             }
             if ("cron".equals(SCENARIO) || "all".equals(SCENARIO)) {
                 scenarios.put("cron_resend_no_ack_receive", scenarioCronResend(tokenA, tokenB));
+            }
+            if ("auth".equals(SCENARIO) || "all".equals(SCENARIO)) {
+                scenarios.put("auth_chain", scenarioAuthChain());
             }
         } catch (Exception e) {
             ok = false;
@@ -133,15 +155,15 @@ public class WsSmokeTest {
         try {
             wsA = connect(httpClient, tokenA, listenerA);
             wsB = connect(httpClient, tokenB, listenerB);
-            steps.add(step("A->S", "AUTH", authJson(tokenA)));
+            steps.add(step("A->S", "AUTH", authJsonMasked(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
-            steps.add(step("B->S", "AUTH", authJson(tokenB)));
+            steps.add(step("B->S", "AUTH", authJsonMasked(tokenB)));
             auth(wsB, tokenB, listenerB.queue);
 
             String clientMsgId = "basic-" + UUID.randomUUID();
             String sendJson = singleChatJson(clientMsgId, USER_B, "hello-basic");
             steps.add(step("A->S", "SINGLE_CHAT send", sendJson));
-            wsA.sendText(sendJson, true).join();
+            sendText(wsA, sendJson);
 
             String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
             steps.add(step("S->A", "ACK(saved)", ackSaved));
@@ -152,7 +174,7 @@ public class WsSmokeTest {
 
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
             steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
-            wsB.sendText(ackReceiveJson, true).join();
+            sendText(wsB, ackReceiveJson);
 
             // 给服务端异步 DB 更新一点时间（服务端用 dbExecutor）
             Thread.sleep(800);
@@ -197,16 +219,16 @@ public class WsSmokeTest {
         try {
             wsA = connect(httpClient, tokenA, listenerA);
             wsB = connect(httpClient, tokenB, listenerB);
-            steps.add(step("A->S", "AUTH", authJson(tokenA)));
+            steps.add(step("A->S", "AUTH", authJsonMasked(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
-            steps.add(step("B->S", "AUTH", authJson(tokenB)));
+            steps.add(step("B->S", "AUTH", authJsonMasked(tokenB)));
             auth(wsB, tokenB, listenerB.queue);
 
             String clientMsgId = "idem-" + UUID.randomUUID();
 
             String send1 = singleChatJson(clientMsgId, USER_B, "hello-idem-1");
             steps.add(step("A->S", "SINGLE_CHAT send #1", send1));
-            wsA.sendText(send1, true).join();
+            sendText(wsA, send1);
             String ack1 = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
             steps.add(step("S->A", "ACK(saved) #1", ack1));
             String serverMsgId1 = requireField(ack1, "serverMsgId");
@@ -214,7 +236,7 @@ public class WsSmokeTest {
             // 立即“重发同一个 clientMsgId”
             String send2 = singleChatJson(clientMsgId, USER_B, "hello-idem-2");
             steps.add(step("A->S", "SINGLE_CHAT resend #2", send2));
-            wsA.sendText(send2, true).join();
+            sendText(wsA, send2);
             String ack2 = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
             steps.add(step("S->A", "ACK(saved) #2", ack2));
             String serverMsgId2 = requireField(ack2, "serverMsgId");
@@ -230,7 +252,7 @@ public class WsSmokeTest {
 
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId1, USER_A);
             steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
-            wsB.sendText(ackReceiveJson, true).join();
+            sendText(wsB, ackReceiveJson);
             Thread.sleep(300);
 
             r.put("ok", true);
@@ -269,13 +291,13 @@ public class WsSmokeTest {
         WebSocket wsA = null;
         try {
             wsA = connect(httpClient, tokenA, listenerA);
-            steps.add(step("A->S", "AUTH", authJson(tokenA)));
+            steps.add(step("A->S", "AUTH", authJsonMasked(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
 
             String clientMsgId = "offline-" + UUID.randomUUID();
             String sendJson = singleChatJson(clientMsgId, USER_B, "hello-offline");
             steps.add(step("A->S", "SINGLE_CHAT send (B offline)", sendJson));
-            wsA.sendText(sendJson, true).join();
+            sendText(wsA, sendJson);
 
             String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
             steps.add(step("S->A", "ACK(saved)", ackSaved));
@@ -289,7 +311,7 @@ public class WsSmokeTest {
             WebSocket wsB = null;
             try {
                 wsB = connect(httpClient, tokenB, listenerB);
-                steps.add(step("B->S", "AUTH (B online)", authJson(tokenB)));
+                steps.add(step("B->S", "AUTH (B online)", authJsonMasked(tokenB)));
                 auth(wsB, tokenB, listenerB.queue);
 
                 // 期待：收到之前那条离线消息
@@ -299,7 +321,7 @@ public class WsSmokeTest {
                 // 收件人确认收到：回 ACK_RECEIVED（ack_receive）
                 String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
                 steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
-                wsB.sendText(ackReceiveJson, true).join();
+                sendText(wsB, ackReceiveJson);
                 Thread.sleep(800);
 
                 r.put("ok", true);
@@ -349,15 +371,15 @@ public class WsSmokeTest {
         try {
             wsA = connect(httpClient, tokenA, listenerA);
             wsB = connect(httpClient, tokenB, listenerB);
-            steps.add(step("A->S", "AUTH", authJson(tokenA)));
+            steps.add(step("A->S", "AUTH", authJsonMasked(tokenA)));
             auth(wsA, tokenA, listenerA.queue);
-            steps.add(step("B->S", "AUTH", authJson(tokenB)));
+            steps.add(step("B->S", "AUTH", authJsonMasked(tokenB)));
             auth(wsB, tokenB, listenerB.queue);
 
             String clientMsgId = "cron-" + UUID.randomUUID();
             String sendJson = singleChatJson(clientMsgId, USER_B, "hello-cron-resend");
             steps.add(step("A->S", "SINGLE_CHAT send", sendJson));
-            wsA.sendText(sendJson, true).join();
+            sendText(wsA, sendJson);
 
             String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
             steps.add(step("S->A", "ACK(saved)", ackSaved));
@@ -375,7 +397,7 @@ public class WsSmokeTest {
             // 收到补发后再回 ACK_RECEIVED
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
             steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
-            wsB.sendText(ackReceiveJson, true).join();
+            sendText(wsB, ackReceiveJson);
             Thread.sleep(800);
 
             r.put("ok", true);
@@ -393,7 +415,151 @@ public class WsSmokeTest {
         }
     }
 
+    /**
+     * 场景 5：鉴权链路
+     * 目标：
+     * - 握手阶段无 token：应 401 拒绝（missing_access_token）
+     * - 握手阶段 token 已过期：应 401 拒绝（invalid_access_token）
+     * - 握手 + AUTH 成功后：PING -> PONG
+     * - accessToken 过期后：PING -> ERROR(token_expired) 并断开
+     */
+    private static Map<String, Object> scenarioAuthChain() {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", false);
+        r.put("why", "验证握手鉴权 + AUTH/REAUTH 续期 + token 过期断连");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
+
+        final long uid = USER_A + 100_000;
+        final long handshakeTimeoutMs = Math.min(TIMEOUT_MS, 1500);
+
+        // 1) short-lived token: auth ok -> ping ok -> expire -> reauth -> ping ok -> expire -> ping fail
+        HttpClient okClient = HttpClient.newHttpClient();
+        QueueListener listener = new QueueListener();
+        WebSocket ws = null;
+        try {
+            String shortToken = issueAccessToken(uid, AUTH_TOKEN_TTL_SECONDS);
+            ws = connect(okClient, shortToken, listener);
+
+            Map<String, Object> redis1 = tryReadRedisRoute(uid);
+            r.put("redisRouteAfterHandshake", redis1);
+            steps.add(step("C->Redis", "GET/TTL route(userA)", toJson(redis1)));
+
+            steps.add(step("C->S", "AUTH", authJsonMasked(shortToken)));
+            auth(ws, shortToken, listener.queue);
+            steps.add(step("S->C", "AUTH_OK", "{\"type\":\"AUTH_OK\"}"));
+
+            String ping1 = jsonObj("type", "PING", "ts", String.valueOf(Instant.now().toEpochMilli()));
+            steps.add(step("C->S", "PING(before exp)", ping1));
+            sendText(ws, ping1);
+            String pong1 = await(listener.queue, TIMEOUT_MS, s -> "PONG".equalsIgnoreCase(extractString(s, "type")));
+            steps.add(step("S->C", "PONG", pong1));
+
+            // 等待 token 过期（服务端按 expMs 判断，单位毫秒）
+            Thread.sleep(AUTH_TOKEN_TTL_SECONDS * 1000 + 500);
+
+            // REAUTH：刷新 expMs（不触发离线补发）
+            String newToken = issueAccessToken(uid, AUTH_TOKEN_TTL_SECONDS);
+            String reauthJson = jsonObj("type", "REAUTH", "token", newToken);
+            steps.add(step("C->S", "REAUTH", "{\"type\":\"REAUTH\",\"token\":\"***\"}"));
+            sendText(ws, reauthJson);
+            String reauthOk = await(listener.queue, TIMEOUT_MS, s -> "AUTH_OK".equalsIgnoreCase(extractString(s, "type")));
+            steps.add(step("S->C", "AUTH_OK (reauth)", reauthOk));
+
+            // REAUTH 后应继续可用
+            String ping2 = jsonObj("type", "PING", "ts", String.valueOf(Instant.now().toEpochMilli()));
+            steps.add(step("C->S", "PING(after reauth)", ping2));
+            sendText(ws, ping2);
+            String pong2 = await(listener.queue, TIMEOUT_MS, s -> "PONG".equalsIgnoreCase(extractString(s, "type")));
+            steps.add(step("S->C", "PONG", pong2));
+
+            // 等待“新 token”过期后，再次 PING 应 token_expired
+            Thread.sleep(AUTH_TOKEN_TTL_SECONDS * 1000 + 500);
+            String ping3 = jsonObj("type", "PING", "ts", String.valueOf(Instant.now().toEpochMilli()));
+            steps.add(step("C->S", "PING(after new exp)", ping3));
+            sendText(ws, ping3);
+            String err = await(listener.queue, TIMEOUT_MS, s -> "ERROR".equalsIgnoreCase(extractString(s, "type")));
+            steps.add(step("S->C", "ERROR(token_expired)", err));
+
+            String reason = extractString(err, "reason");
+            Map<String, Object> redis2 = tryReadRedisRoute(uid);
+            r.put("redisRouteAfterExpiredPing", redis2);
+            steps.add(step("C->Redis", "GET/TTL route(userA) after exp", toJson(redis2)));
+            r.put("expected", "before exp: PONG; REAUTH success -> still PONG; after new exp: ERROR(token_expired) then close");
+            r.put("errorReason", reason);
+            r.put("ok", reason != null && "token_expired".equalsIgnoreCase(reason));
+        } catch (Exception e) {
+            r.put("reason", "常见原因：服务端未开启握手鉴权/exp 单位不一致/clock skew 太大/WS 未启动");
+            r.put("error", String.valueOf(e));
+        } finally {
+            close(ws);
+        }
+
+        // 1.5) reauth uid mismatch (best-effort; does not affect ok)
+        try {
+            HttpClient c = HttpClient.newHttpClient();
+            QueueListener l = new QueueListener();
+            WebSocket w = connect(c, issueAccessToken(uid, 30), l);
+            auth(w, issueAccessToken(uid, 30), l.queue);
+
+            String mismatchToken = issueAccessToken(uid + 1, 30);
+            String reauth = jsonObj("type", "REAUTH", "token", mismatchToken);
+            steps.add(step("C->S", "REAUTH(uid mismatch)", "{\"type\":\"REAUTH\",\"token\":\"***\"}"));
+            sendText(w, reauth);
+            String err = await(l.queue, TIMEOUT_MS, s -> "ERROR".equalsIgnoreCase(extractString(s, "type")));
+            steps.add(step("S->C", "ERROR", err));
+            close(w);
+        } catch (Exception e) {
+            steps.add(step("C->S", "REAUTH(uid mismatch)", "{\"type\":\"REAUTH_MISMATCH_SKIP\",\"reason\":" + jsonString(String.valueOf(e)) + "}"));
+        }
+
+        // 2) handshake negative tests (best-effort; do not affect ok)
+        HttpClient httpClient = HttpClient.newHttpClient();
+
+        try {
+            WebSocket noToken = connectNoAuthHeader(httpClient, new QueueListener(), handshakeTimeoutMs);
+            close(noToken);
+            steps.add(step("C->S", "HANDSHAKE(no token)", "{\"type\":\"__UNEXPECTED__\",\"reason\":\"handshake_succeeded_but_should_fail\"}"));
+        } catch (Exception e) {
+            steps.add(step("C->S", "HANDSHAKE(no token)", "{\"type\":\"HANDSHAKE_FAIL\",\"reason\":" + jsonString(String.valueOf(e)) + "}"));
+        }
+
+        try {
+            String expired = issueAccessToken(uid, -1);
+            WebSocket expiredWs = connect(httpClient, expired, new QueueListener(), handshakeTimeoutMs);
+            close(expiredWs);
+            steps.add(step("C->S", "HANDSHAKE(expired token)", "{\"type\":\"__UNEXPECTED__\",\"reason\":\"handshake_succeeded_but_should_fail\"}"));
+        } catch (Exception e) {
+            steps.add(step("C->S", "HANDSHAKE(expired token)", "{\"type\":\"HANDSHAKE_FAIL\",\"reason\":" + jsonString(String.valueOf(e)) + "}"));
+        }
+
+        try {
+            QueueListener ql = new QueueListener();
+            String token = issueAccessToken(uid);
+            WebSocket qws = connectWithQueryToken(httpClient, token, ql, handshakeTimeoutMs);
+            steps.add(step("C->S", "HANDSHAKE(query token)", "{\"type\":\"HANDSHAKE_OK\",\"via\":\"query\"}"));
+            close(qws);
+        } catch (Exception e) {
+            steps.add(step("C->S", "HANDSHAKE(query token)", "{\"type\":\"HANDSHAKE_FAIL\",\"reason\":" + jsonString(String.valueOf(e)) + "}"));
+        }
+
+        try {
+            String invalid = issueAccessToken(uid) + "x";
+            WebSocket invalidWs = connect(httpClient, invalid, new QueueListener(), handshakeTimeoutMs);
+            close(invalidWs);
+            steps.add(step("C->S", "HANDSHAKE(invalid token)", "{\"type\":\"__UNEXPECTED__\",\"reason\":\"handshake_succeeded_but_should_fail\"}"));
+        } catch (Exception e) {
+            steps.add(step("C->S", "HANDSHAKE(invalid token)", "{\"type\":\"HANDSHAKE_FAIL\",\"reason\":" + jsonString(String.valueOf(e)) + "}"));
+        }
+
+        return r;
+    }
+
     private static WebSocket connect(HttpClient httpClient, String token, QueueListener listener) {
+        return connect(httpClient, token, listener, TIMEOUT_MS);
+    }
+
+    private static WebSocket connect(HttpClient httpClient, String token, QueueListener listener, long timeoutMs) {
         // 注意：Java HttpClient 的 WebSocketBuilder 在某些环境不允许自定义握手 headers（但 JDK22 正常）
         // 如果握手返回 401，通常是：
         // - jwtSecret 不一致
@@ -402,21 +568,74 @@ public class WsSmokeTest {
         return httpClient.newWebSocketBuilder()
                 .header("Authorization", "Bearer " + token)
                 .buildAsync(URI.create(WS_URL), listener)
+                .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .join();
+    }
+
+    private static WebSocket connectNoAuthHeader(HttpClient httpClient, QueueListener listener) {
+        return connectNoAuthHeader(httpClient, listener, TIMEOUT_MS);
+    }
+
+    private static WebSocket connectNoAuthHeader(HttpClient httpClient, QueueListener listener, long timeoutMs) {
+        return httpClient.newWebSocketBuilder()
+                .buildAsync(URI.create(WS_URL), listener)
+                .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .join();
+    }
+
+    private static WebSocket connectWithQueryToken(HttpClient httpClient, String token, QueueListener listener) {
+        return connectWithQueryToken(httpClient, token, listener, TIMEOUT_MS);
+    }
+
+    private static WebSocket connectWithQueryToken(HttpClient httpClient, String token, QueueListener listener, long timeoutMs) {
+        String sep = WS_URL.contains("?") ? "&" : "?";
+        String url = WS_URL + sep + "token=" + urlEncode(token);
+        return httpClient.newWebSocketBuilder()
+                .buildAsync(URI.create(url), listener)
+                .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .join();
     }
 
     private static void auth(WebSocket ws, String token, BlockingQueue<String> inbox) throws Exception {
-        ws.sendText(jsonObj(
+        sendText(ws, jsonObj(
                 "type", "AUTH",
                 "token", token
-        ), true).join();
+        ));
 
         // 只要出现 AUTH_OK 即代表“已绑定 userId 且 token 解析成功”
         await(inbox, TIMEOUT_MS, s -> "AUTH_OK".equalsIgnoreCase(extractString(s, "type")));
     }
 
+    private static void sendText(WebSocket ws, String json) {
+        ws.sendText(json, true)
+                .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .join();
+    }
+
     private static String authJson(String token) {
         return jsonObj("type", "AUTH", "token", token);
+    }
+
+    private static String authJsonMasked(String token) {
+        return jsonObj("type", "AUTH", "token", maskToken(token));
+    }
+
+    private static String maskToken(String token) {
+        if (token == null) return null;
+        int len = token.length();
+        if (len <= 12) return "***";
+        return token.substring(0, 6) + "..." + token.substring(len - 4);
+    }
+
+    private static String redactTokenInRawJson(String rawJson) {
+        if (rawJson == null) return null;
+        String needle = "\"token\":\"";
+        int idx = rawJson.indexOf(needle);
+        if (idx < 0) return rawJson;
+        int start = idx + needle.length();
+        int end = rawJson.indexOf('"', start);
+        if (end < 0) return rawJson;
+        return rawJson.substring(0, start) + "***" + rawJson.substring(end);
     }
 
     private static String singleChatJson(String clientMsgId, long toUserId, String body) {
@@ -472,27 +691,38 @@ public class WsSmokeTest {
         m.put("atMs", Instant.now().toEpochMilli());
         m.put("direction", direction);
         m.put("step", step);
-        m.put("type", extractString(rawJson, "type"));
-        m.put("clientMsgId", extractString(rawJson, "clientMsgId"));
-        m.put("serverMsgId", extractString(rawJson, "serverMsgId"));
-        m.put("ackType", extractString(rawJson, "ackType"));
-        m.put("body", extractString(rawJson, "body"));
-        m.put("raw", rawJson);
+        String safeRawJson = redactTokenInRawJson(rawJson);
+        m.put("type", extractString(safeRawJson, "type"));
+        m.put("clientMsgId", extractString(safeRawJson, "clientMsgId"));
+        m.put("serverMsgId", extractString(safeRawJson, "serverMsgId"));
+        m.put("ackType", extractString(safeRawJson, "ackType"));
+        m.put("body", extractString(safeRawJson, "body"));
+        m.put("raw", safeRawJson);
         return m;
     }
 
     private static void close(WebSocket ws) {
         if (ws == null) return;
         try {
-            ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye").join();
+            ws.sendClose(WebSocket.NORMAL_CLOSURE, "bye")
+                    .orTimeout(800, TimeUnit.MILLISECONDS)
+                    .join();
+        } catch (Exception ignored) {
+        }
+        try {
+            ws.abort();
         } catch (Exception ignored) {
         }
     }
 
     private static String issueAccessToken(long userId) {
+        return issueAccessToken(userId, 1800);
+    }
+
+    private static String issueAccessToken(long userId, long ttlSeconds) {
         // 与服务端 JwtService 一致：iat/exp 为秒（Date.from(Instant)）
         long now = Instant.now().getEpochSecond();
-        long exp = now + 1800;
+        long exp = now + ttlSeconds;
 
         String headerJson = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
         String payloadJson = "{"
@@ -528,6 +758,139 @@ public class WsSmokeTest {
     private static String jsonString(String s) {
         // 仅满足本脚本使用场景（token/clientMsgId/serverMsgId 不含控制字符）
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String urlEncode(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+                sb.append(c);
+            } else {
+                byte[] bytes = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+                for (byte b : bytes) {
+                    sb.append('%');
+                    String hex = Integer.toHexString(b & 0xff).toUpperCase();
+                    if (hex.length() == 1) sb.append('0');
+                    sb.append(hex);
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static Map<String, Object> tryReadRedisRoute(long userId) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", false);
+        out.put("host", REDIS_HOST);
+        out.put("port", REDIS_PORT);
+        out.put("key", "im:gw:route:" + userId);
+
+        try (RedisRespClient client = new RedisRespClient(REDIS_HOST, REDIS_PORT, 800)) {
+            if (REDIS_PASSWORD != null && !REDIS_PASSWORD.isBlank()) {
+                client.auth(REDIS_PASSWORD);
+            }
+            String key = (String) out.get("key");
+            out.put("value", client.get(key));
+            out.put("ttlSeconds", client.ttl(key));
+            out.put("ok", true);
+            return out;
+        } catch (Exception e) {
+            out.put("error", String.valueOf(e));
+            return out;
+        }
+    }
+
+    static class RedisRespClient implements AutoCloseable {
+        private final java.net.Socket socket;
+        private final java.io.InputStream in;
+        private final java.io.OutputStream out;
+
+        RedisRespClient(String host, int port, int connectTimeoutMs) throws Exception {
+            this.socket = new java.net.Socket();
+            this.socket.connect(new java.net.InetSocketAddress(host, port), connectTimeoutMs);
+            this.socket.setSoTimeout(1500);
+            this.in = socket.getInputStream();
+            this.out = socket.getOutputStream();
+        }
+
+        void auth(String password) throws Exception {
+            Object resp = send("AUTH", password);
+            if (!(resp instanceof String s) || (!"OK".equalsIgnoreCase(s))) {
+                throw new RuntimeException("redis auth failed: " + resp);
+            }
+        }
+
+        String get(String key) throws Exception {
+            Object resp = send("GET", key);
+            if (resp == null) return null;
+            if (resp instanceof String s) return s;
+            throw new RuntimeException("unexpected GET resp: " + resp);
+        }
+
+        long ttl(String key) throws Exception {
+            Object resp = send("TTL", key);
+            if (resp instanceof Long l) return l;
+            throw new RuntimeException("unexpected TTL resp: " + resp);
+        }
+
+        private Object send(String... args) throws Exception {
+            writeCommand(args);
+            out.flush();
+            return readResp();
+        }
+
+        private void writeCommand(String... args) throws Exception {
+            out.write('*');
+            out.write(Integer.toString(args.length).getBytes(StandardCharsets.US_ASCII));
+            out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+            for (String a : args) {
+                byte[] bytes = a.getBytes(StandardCharsets.UTF_8);
+                out.write('$');
+                out.write(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+                out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                out.write(bytes);
+                out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+            }
+        }
+
+        private Object readResp() throws Exception {
+            int b = in.read();
+            if (b < 0) throw new RuntimeException("redis eof");
+            switch (b) {
+                case '+': return readLine();
+                case '-': throw new RuntimeException("redis error: " + readLine());
+                case ':': return Long.parseLong(readLine());
+                case '$': {
+                    int len = Integer.parseInt(readLine());
+                    if (len < 0) return null;
+                    byte[] buf = in.readNBytes(len);
+                    in.readNBytes(2); // CRLF
+                    return new String(buf, StandardCharsets.UTF_8);
+                }
+                default: throw new RuntimeException("redis bad resp: " + (char) b);
+            }
+        }
+
+        private String readLine() throws Exception {
+            StringBuilder sb = new StringBuilder();
+            while (true) {
+                int c = in.read();
+                if (c < 0) throw new RuntimeException("redis eof");
+                if (c == '\r') {
+                    int n = in.read();
+                    if (n != '\n') throw new RuntimeException("redis bad crlf");
+                    return sb.toString();
+                }
+                sb.append((char) c);
+            }
+        }
+
+        @Override
+        public void close() throws Exception {
+            socket.close();
+        }
     }
 
     private static String jsonObj(String... kv) {
