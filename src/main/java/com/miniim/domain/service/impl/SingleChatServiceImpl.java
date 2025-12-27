@@ -26,4 +26,13 @@ public class SingleChatServiceImpl extends ServiceImpl<SingleChatMapper, SingleC
             return newChat.getId();
         }
     }
+
+    @Override
+    public Long findSingleChatId(Long user1Id, Long user2Id) {
+        LambdaQueryWrapper<SingleChatEntity> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(SingleChatEntity::getUser1Id, user1Id)
+                .eq(SingleChatEntity::getUser2Id, user2Id);
+        SingleChatEntity chat = this.getOne(queryWrapper);
+        return chat == null ? null : chat.getId();
+    }
 }
