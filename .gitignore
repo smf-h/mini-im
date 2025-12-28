@@ -9,6 +9,10 @@ logs/
 .codex-run/
 scripts/ws-smoke-test/.out/
 
+# Frontend (Vue)
+frontend/node_modules/
+frontend/dist/
+
 # Maven
 target/
 !.mvn/wrapper/maven-wrapper.jar

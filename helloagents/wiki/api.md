@@ -1,5 +1,12 @@
 # API 手册
 
+## 数字精度（重要）
+
+- 后端 ID 多为 Java `long/Long`（例如 `userId/id/singleChatId/serverMsgId/requestId`）。浏览器端若按 JS `Number` 解析，超过 `2^53-1` 会发生精度丢失（表现为“四舍五入/末尾变 0”）。
+- **协议约定：所有语义为“ID”的 long/Long 字段，JSON 一律输出为字符串**（例如 `"toUserId":"123"`），避免前端误用 Number。
+- 非 ID 的 long/Long（例如分页 `total/size/current`）仍保持 JSON 数字类型。
+- 客户端建议：凡是语义为“ID/游标”的字段，一律按字符串处理（展示/比较/拼接），不要转 `Number(...)`。
+
 ## HTTP API
 
 ### Auth
@@ -9,6 +16,27 @@
 
 实现位置：`com.miniim.auth.web.AuthController`
 
+补充说明（以代码为准）：
+- `POST /auth/login` 目前支持“首次登录自动注册”（用户不存在时会创建用户并设置 `passwordHash`）。
+- 如果历史数据存在 `passwordHash` 为空的用户，`/auth/login` 会在同一行补齐 `passwordHash`（不再重复插入，避免 500）。
+- 常见失败返回（响应体 `Result.fail(code, msg)` 的 `msg`）：
+  - `invalid_username_or_password`（400）
+  - `duplicate_key`（400，通常是用户名冲突等唯一键问题）
+  - `redis_unavailable`（500，refreshToken 存储依赖 Redis）
+
+### Single Chat Conversations（单聊会话列表）
+- `GET /single-chat/conversation/cursor?limit=20&lastUpdatedAt=...&lastId=...`
+  - 语义：按 `updatedAt` 倒序（次序：updatedAt desc, id desc），返回下一页游标
+  - 约束：`lastUpdatedAt` 与 `lastId` 必须同时为空或同时存在
+- `GET /single-chat/conversation/list?pageNo=1&pageSize=20`
+  - 语义：普通分页（返回 MyBatis-Plus `Page`）
+
+- 返回补充（以代码为准）：
+  - `unreadCount`：当前用户未读条数（基于 `t_single_chat_member.last_read_msg_id` 计算）
+  - `peerLastReadMsgId`：对方已读游标（用于“已读/未读”展示）
+
+实现位置：`com.miniim.domain.controller.SingleChatConversationController`
+
 ### Single Chat Messages（单聊消息查询）
 - `GET /single-chat/message/cursor?peerUserId=xxx&limit=20&lastId=yyy`
   - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
@@ -17,7 +45,40 @@
 
 实现位置：`com.miniim.domain.controller.SingleChatMessageController`
 
+### Friend Relation（好友关系）
+- `GET /friend/relation/cursor?limit=10&lastId=yyy`
+- `GET /friend/relation/list`
+
+实现位置：`com.miniim.domain.controller.FriendRelationController`
+
+### Friend Request（好友申请列表查询）
+- `GET /friend/request/cursor?box=all&limit=20&lastId=yyy`
+  - `box`：`inbox`=我收到、`outbox`=我发出、`all`=收+发（默认）
+  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+- `GET /friend/request/list?box=all&pageNo=1&pageSize=20`
+  - 语义：普通分页（返回 MyBatis-Plus `Page`）
+- `POST /friend/request/decide`
+  - body：`{ "requestId": 123, "action": "accept|reject" }`
+  - 响应：`{ "singleChatId": 123|null }`（accept 时返回会话 id）
+
+实现位置：`com.miniim.domain.controller.FriendRequestController`
+
+### User（用户基础信息）
+- `GET /user/basic?ids=10001,10002`
+  - 用途：前端获取昵称/用户名（例如站内通知、列表展示）
+  - 响应：`[{ "id": "10001", "username": "...", "nickname": "..." }, ...]`
+
+实现位置：`com.miniim.domain.controller.UserController`
+
 ---
+
+## WebSocket 送达/已读/补发（成员游标，方案B）
+
+- 服务端不再用 `t_message.status` 表达“每个用户的送达/已读”；改为推进成员维度游标：`t_single_chat_member.last_delivered_msg_id/last_read_msg_id`、`t_group_member.last_delivered_msg_id/last_read_msg_id`。
+- 接收方确认（客户端 → 服务端）：`type="ACK"` + `serverMsgId`（消息 id）
+  - 送达：`ackType="delivered"`（兼容：`ack_receive` / `received`）
+  - 已读：`ackType="read"`（兼容：`ack_read`）
+- 离线补发：用户 `AUTH` 成功后，服务端按游标拉取 `id > last_delivered_msg_id` 的未投递区间并下发；可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）。
 
 ## WebSocket
 
@@ -28,6 +89,16 @@
 
 具体监听地址/路径等以 `src/main/resources/application-gateway.yml` 配置为准。
 
+### 在线路由（Redis routeKey）
+- 网关实例在连接鉴权成功后，会写入 `im:gw:route:<userId> = <instanceId>`（带 TTL），用于“多实例路由定位”。
+- 同一实例内允许同一 `userId` 同时存在多个 WS 连接（例如多个浏览器标签页）；仅当该 `userId` 的最后一个连接断开时才会删除 routeKey，避免在线状态抖动。
+
+### 握手鉴权（客户端注意事项）
+- 非浏览器客户端：可在握手时使用 `Authorization: Bearer <accessToken>`
+- 浏览器端：WebSocket API 无法自定义握手 header，需用 query 传递：
+  - `ws://127.0.0.1:9001/ws?token=<accessToken>`（或 `accessToken=<...>`）
+- 兼容逻辑：连接建立后仍建议发送 `AUTH` 帧（便于统一触发离线补发等逻辑）
+
 ---
 
 ## WebSocket 业务协议约定（单聊 v1）
@@ -37,7 +108,9 @@
 
 ### 消息类型
 - `AUTH`：首包鉴权（兼容旧客户端）。
+- `REAUTH`：续期（刷新服务端记录的 token 过期时间）。
 - `SINGLE_CHAT`：单聊发送消息（当前仅 TEXT）。
+- `FRIEND_REQUEST`：发起好友申请（先落库，必要时 best-effort 推送给对方）。
 - `ACK`：业务回执（用于幂等确认/接收确认）。
 - `ERROR`：错误回包。
 
@@ -65,16 +138,43 @@
 
 ### ACK_RECEIVED（接收方 → 服务端）
 - 用途：接收方确认“已收到消息”，服务端据此更新数据库消息状态（`RECEIVED`）。
-- 推荐字段：
+- 当前实现必填字段（以代码为准）：
   - `type="ACK"`
   - `ackType="ack_receive"`（兼容：`received`）
-  - `serverMsgId`（强烈建议必填）
-  - `clientMsgId`（可选，用于额外校验）
-  - `to`：原发送方 userId（用于服务端转发 ACK/或校验）
+  - `clientMsgId`（发送方的 clientMsgId，来自服务端下发 `SINGLE_CHAT.clientMsgId`）
+  - `to`：原发送方 userId
+  - `serverMsgId`：服务端消息 id（建议必填，便于精确更新）
 
 ### 幂等与重试（发送方）
 - 发送方以“收到 `ACK(SAVED)`”作为服务端落库确认；未收到则客户端按 `clientMsgId` 重发。
 - 服务端幂等键：`(fromUserId + '-' + clientMsgId)`；重复请求应返回相同 `serverMsgId`，避免重复落库。
+
+---
+
+### 单聊已读/未读（HTTP）
+- `GET /single-chat/member/state?peerUserId=xxx`
+  - 返回：`singleChatId`、`myLastReadMsgId`、`peerLastReadMsgId`
+  - 用途：前端在单聊页面展示“已读/未读”，并可用于调试
+
+## FRIEND_REQUEST（客户端 → 服务端）
+
+### 请求（客户端 → 服务端）
+- 必填字段：
+  - `type="FRIEND_REQUEST"`
+  - `clientMsgId`：客户端幂等键（客户端重发必须保持不变）
+  - `to`：目标 userId
+- 可选字段：
+  - `body`：验证信息（<=256）
+  - `ts`：客户端时间戳（仅用于展示/诊断）
+
+### ACK（服务端 → 发起方）
+- 落库成功后回：`type="ACK"`
+  - `ackType="SAVED"`
+  - `clientMsgId` 原样回传
+  - `serverMsgId`：本次好友申请的 `requestId`（用于列表/幂等）
+
+### 推送（服务端 → 被申请方）
+- 如果被申请方在线：服务端会 best-effort 推送一次 `type="FRIEND_REQUEST"`（不保证送达、不重试）。
 
 ### 离线与补发
 - 基本原则：未收到 `ACK_RECEIVED` 视为投递失败；由定时任务兜底重发。

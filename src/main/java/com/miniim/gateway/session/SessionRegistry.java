@@ -8,7 +8,11 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
@@ -22,15 +26,15 @@ public class SessionRegistry {
     private static final Duration ROUTE_TTL = Duration.ofSeconds(120);
 
     /**
-     * 单设备：本机内存只维护 userId -> Channel（当前实例的连接）。
+     * 本机内存维护 userId -> Channel 集合（当前实例的连接）。
      *
      * <p>注意：Channel 无法序列化到 Redis，所以多实例时只能把“路由信息”存 Redis：</p>
      * <ul>
      *   <li>Redis：userId -> instanceId（用于定位推送落到哪个实例）</li>
-     *   <li>本机：userId -> Channel（用于在当前实例 close/写回）</li>
+     *   <li>本机：userId -> Channel(s)（用于在当前实例 close/写回）</li>
      * </ul>
      */
-    private final ConcurrentHashMap<Long, Channel> userChannel = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ConcurrentHashMap<String, Channel>> userChannels = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> channelIdToUserId = new ConcurrentHashMap<>();
 
     private final StringRedisTemplate redis;
@@ -42,11 +46,8 @@ public class SessionRegistry {
     }
 
     public void bind(Channel ch, long userId, Long accessExpMs) {
-        Channel old = userChannel.put(userId, ch);
-        if (old != null && old != ch) {
-            unbind(old);
-            old.close();
-        }
+        userChannels.computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
+                .put(ch.id().asShortText(), ch);
 
         ch.attr(ATTR_USER_ID).set(userId);
         ch.attr(ATTR_ACCESS_EXP_MS).set(accessExpMs);
@@ -58,8 +59,14 @@ public class SessionRegistry {
     public void unbind(Channel ch) {
         Long userId = ch.attr(ATTR_USER_ID).get();
         if (userId != null) {
-            userChannel.remove(userId, ch);
-            deleteRouteIfOwned(userId);
+            ConcurrentHashMap<String, Channel> map = userChannels.get(userId);
+            if (map != null) {
+                map.remove(ch.id().asShortText(), ch);
+                if (map.isEmpty()) {
+                    userChannels.remove(userId, map);
+                    deleteRouteIfOwned(userId);
+                }
+            }
         }
         channelIdToUserId.remove(ch.id().asShortText());
     }
@@ -73,11 +80,56 @@ public class SessionRegistry {
     }
 
     public Channel getChannel(long userId) {
-        return userChannel.get(userId);
+        ConcurrentHashMap<String, Channel> map = userChannels.get(userId);
+        if (map == null || map.isEmpty()) {
+            return null;
+        }
+        for (Channel ch : map.values()) {
+            if (ch != null && ch.isActive()) {
+                return ch;
+            }
+        }
+        return null;
+    }
+
+    public List<Channel> getChannels(long userId) {
+        ConcurrentHashMap<String, Channel> map = userChannels.get(userId);
+        if (map == null || map.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return new ArrayList<>(map.values());
     }
 
     public Collection<Channel> getAllChannels() {
-        return userChannel.values();
+        List<Channel> all = new ArrayList<>();
+        for (Map<String, Channel> map : userChannels.values()) {
+            all.addAll(map.values());
+        }
+        return all;
+    }
+
+    public List<Long> getOnlineUserIds() {
+        List<Long> userIds = new ArrayList<>();
+        for (Map.Entry<Long, ConcurrentHashMap<String, Channel>> entry : userChannels.entrySet()) {
+            if (entry == null) {
+                continue;
+            }
+            ConcurrentHashMap<String, Channel> map = entry.getValue();
+            if (map == null || map.isEmpty()) {
+                continue;
+            }
+            boolean anyActive = false;
+            for (Channel ch : map.values()) {
+                if (ch != null && ch.isActive()) {
+                    anyActive = true;
+                    break;
+                }
+            }
+            if (anyActive) {
+                userIds.add(entry.getKey());
+            }
+        }
+        return userIds;
     }
 
     public void touch(Channel ch) {

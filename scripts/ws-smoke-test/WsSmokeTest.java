@@ -1,5 +1,7 @@
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -44,16 +46,18 @@ import javax.crypto.spec.SecretKeySpec;
  *
  * <h2>运行参数（通过 -Dxxx 传入）</h2>
  * -Dws=ws://127.0.0.1:9001/ws
+ * -Dhttp=http://127.0.0.1:8080
  * -DjwtSecret=change-me-please-change-me-please-change-me
  * -DuserA=10001 -DuserB=10002
  * -DtimeoutMs=8000
- * -Dscenario=basic|idempotency|offline|cron|auth|all
+ * -Dscenario=basic|idempotency|offline|cron|auth|friend_request|all
  * -DauthTokenTtlSeconds=2 (auth only)
  * -DredisHost=127.0.0.1 -DredisPort=6379 -DredisPassword= (optional; for auth scenario)
  */
 public class WsSmokeTest {
 
     private static final String WS_URL = System.getProperty("ws", "ws://127.0.0.1:9001/ws");
+    private static final String HTTP_BASE = System.getProperty("http", "http://127.0.0.1:8080").replaceAll("/+$", "");
     private static final String JWT_SECRET = System.getProperty("jwtSecret", "change-me-please-change-me-please-change-me");
 
     private static final long USER_A = Long.parseLong(System.getProperty("userA", "10001"));
@@ -75,6 +79,7 @@ public class WsSmokeTest {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, Object> vars = new LinkedHashMap<>();
         vars.put("ws", WS_URL);
+        vars.put("http", HTTP_BASE);
         vars.put("scenario", SCENARIO);
         vars.put("userA", USER_A);
         vars.put("userB", USER_B);
@@ -92,6 +97,7 @@ public class WsSmokeTest {
         explain.put("dbStatus.1", "SAVED：已落库（等待投递/等待收件人 ACK_RECEIVED）");
         explain.put("dbStatus.5", "RECEIVED：已收到收件人 ACK_RECEIVED");
         explain.put("dbStatus.6", "DROPPED：收件人离线（或投递兜底失败），等待上线补发/再投递");
+        explain.put("friendRequest.status.0", "PENDING：好友申请已落库，等待对方处理");
         out.put("explain", explain);
 
         Map<String, Object> scenarios = new LinkedHashMap<>();
@@ -113,6 +119,9 @@ public class WsSmokeTest {
             }
             if ("auth".equals(SCENARIO) || "all".equals(SCENARIO)) {
                 scenarios.put("auth_chain", scenarioAuthChain());
+            }
+            if ("friend_request".equals(SCENARIO) || "all".equals(SCENARIO)) {
+                scenarios.put("friend_request", scenarioFriendRequest(tokenA, tokenB));
             }
         } catch (Exception e) {
             ok = false;
@@ -416,6 +425,80 @@ public class WsSmokeTest {
     }
 
     /**
+     * 场景 6：好友申请（WS 落库 + best-effort 推送 + HTTP 列表）
+     * 目标：
+     * - A -> 服务端：FRIEND_REQUEST 落库成功后拿到 ACK(saved)
+     * - B 在线：收到一次 FRIEND_REQUEST 推送（best-effort）
+     * - HTTP：B inbox / A outbox / all 均可查询到该记录
+     */
+    private static Map<String, Object> scenarioFriendRequest(String tokenA, String tokenB) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("ok", false);
+        r.put("why", "验证 FRIEND_REQUEST：WS 落库 ACK(saved) + 在线推送 + HTTP 游标列表可查");
+        r.put("dbTable", "t_friend_request");
+        List<Map<String, Object>> steps = new ArrayList<>();
+        r.put("steps", steps);
+
+        HttpClient httpClient = HttpClient.newHttpClient();
+        QueueListener listenerA = new QueueListener();
+        QueueListener listenerB = new QueueListener();
+
+        WebSocket wsA = null;
+        WebSocket wsB = null;
+        try {
+            wsA = connect(httpClient, tokenA, listenerA);
+            wsB = connect(httpClient, tokenB, listenerB);
+            steps.add(step("A->S", "AUTH", authJsonMasked(tokenA)));
+            auth(wsA, tokenA, listenerA.queue);
+            steps.add(step("B->S", "AUTH", authJsonMasked(tokenB)));
+            auth(wsB, tokenB, listenerB.queue);
+
+            String clientMsgId = "fr-" + UUID.randomUUID();
+            String sendJson = friendRequestJson(clientMsgId, USER_B, "hi-friend-request");
+            steps.add(step("A->S", "FRIEND_REQUEST send", sendJson));
+            sendText(wsA, sendJson);
+
+            String ackSaved = await(listenerA.queue, TIMEOUT_MS, isAckSaved(clientMsgId));
+            steps.add(step("S->A", "ACK(saved)", ackSaved));
+            String requestId = requireField(ackSaved, "serverMsgId");
+
+            String pushed = await(listenerB.queue, TIMEOUT_MS, isFriendRequest(clientMsgId, requestId));
+            steps.add(step("S->B", "FRIEND_REQUEST push", pushed));
+
+            String inbox = httpGet("/friend/request/cursor?box=inbox&limit=20", tokenB);
+            steps.add(step("HTTP(B)", "GET /friend/request/cursor?box=inbox", inbox));
+            requireContainsAny(inbox,
+                    "\\\"id\\\":" + requestId,
+                    "\\\"id\\\":\\\"" + requestId + "\\\"");
+
+            String outbox = httpGet("/friend/request/cursor?box=outbox&limit=20", tokenA);
+            steps.add(step("HTTP(A)", "GET /friend/request/cursor?box=outbox", outbox));
+            requireContainsAny(outbox,
+                    "\\\"id\\\":" + requestId,
+                    "\\\"id\\\":\\\"" + requestId + "\\\"");
+
+            String allA = httpGet("/friend/request/cursor?box=all&limit=20", tokenA);
+            steps.add(step("HTTP(A)", "GET /friend/request/cursor?box=all", allA));
+            requireContainsAny(allA,
+                    "\\\"id\\\":" + requestId,
+                    "\\\"id\\\":\\\"" + requestId + "\\\"");
+
+            r.put("ok", true);
+            r.put("clientMsgId", clientMsgId);
+            r.put("serverMsgId", requestId);
+            r.put("expected", "A 收到 ACK(saved)；B 在线收到 FRIEND_REQUEST 推送；HTTP inbox/outbox/all 能查到该申请记录");
+            return r;
+        } catch (Exception e) {
+            r.put("reason", "常见原因：HTTP 鉴权拦截器未生效/未携带 Authorization、FRIEND_REQUEST 未接入 WS handler、或 B 未在线导致推送未到");
+            r.put("error", String.valueOf(e));
+            return r;
+        } finally {
+            close(wsA);
+            close(wsB);
+        }
+    }
+
+    /**
      * 场景 5：鉴权链路
      * 目标：
      * - 握手阶段无 token：应 401 拒绝（missing_access_token）
@@ -638,6 +721,17 @@ public class WsSmokeTest {
         return rawJson.substring(0, start) + "***" + rawJson.substring(end);
     }
 
+    private static String httpGet(String pathAndQuery, String accessToken) throws Exception {
+        String url = HTTP_BASE + pathAndQuery;
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Authorization", "Bearer " + accessToken)
+                .GET()
+                .build();
+        HttpResponse<String> resp = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return "{\"status\":" + resp.statusCode() + ",\"body\":" + jsonString(resp.body()) + "}";
+    }
+
     private static String singleChatJson(String clientMsgId, long toUserId, String body) {
         return jsonObj(
                 "type", "SINGLE_CHAT",
@@ -645,6 +739,16 @@ public class WsSmokeTest {
                 "to", String.valueOf(toUserId),
                 "msgType", "TEXT",
                 "body", body,
+                "ts", String.valueOf(Instant.now().toEpochMilli())
+        );
+    }
+
+    private static String friendRequestJson(String clientMsgId, long toUserId, String content) {
+        return jsonObj(
+                "type", "FRIEND_REQUEST",
+                "clientMsgId", clientMsgId,
+                "to", String.valueOf(toUserId),
+                "body", content,
                 "ts", String.valueOf(Instant.now().toEpochMilli())
         );
     }
@@ -678,12 +782,41 @@ public class WsSmokeTest {
         };
     }
 
+    private static Predicate<String> isFriendRequest(String clientMsgId, String serverMsgId) {
+        return s -> {
+            if (!"FRIEND_REQUEST".equalsIgnoreCase(extractString(s, "type"))) return false;
+            if (!clientMsgId.equals(extractString(s, "clientMsgId"))) return false;
+            return serverMsgId.equals(extractString(s, "serverMsgId"));
+        };
+    }
+
     private static String requireField(String json, String field) {
         String v = extractString(json, field);
         if (v == null || v.isBlank()) {
             throw new RuntimeException("missing field in ws json: " + field);
         }
         return v;
+    }
+
+    private static void requireContains(String s, String needle) {
+        if (s == null || needle == null) {
+            throw new RuntimeException("requireContains: null");
+        }
+        if (!s.contains(needle)) {
+            throw new RuntimeException("missing expected substring: " + needle);
+        }
+    }
+
+    private static void requireContainsAny(String s, String... needles) {
+        if (s == null || needles == null || needles.length == 0) {
+            throw new RuntimeException("requireContainsAny: null");
+        }
+        for (String needle : needles) {
+            if (needle != null && s.contains(needle)) {
+                return;
+            }
+        }
+        throw new RuntimeException("missing expected substrings: " + String.join(" OR ", needles));
     }
 
     private static Map<String, Object> step(String direction, String step, String rawJson) {
@@ -756,8 +889,13 @@ public class WsSmokeTest {
     }
 
     private static String jsonString(String s) {
-        // 仅满足本脚本使用场景（token/clientMsgId/serverMsgId 不含控制字符）
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        // 仅满足本脚本使用场景（不做完整 JSON escaping，但至少保证常见输出可用）
+        return "\"" + s
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t") + "\"";
     }
 
     private static String urlEncode(String s) {

@@ -25,6 +25,22 @@ CREATE TABLE IF NOT EXISTS t_single_chat (
   KEY idx_single_chat_user2 (user2_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 单聊成员（用于送达/已读游标；方案B：避免用 t_message.status 表达“每个用户”的送达/已读）
+CREATE TABLE IF NOT EXISTS t_single_chat_member (
+  id BIGINT NOT NULL PRIMARY KEY,
+  single_chat_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  join_at DATETIME(3) NOT NULL,
+  mute_until DATETIME(3) NULL,
+  last_delivered_msg_id BIGINT NULL,
+  last_read_msg_id BIGINT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uk_single_chat_member (single_chat_id, user_id),
+  KEY idx_single_chat_member_user (user_id),
+  KEY idx_single_chat_member_chat (single_chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 群
 CREATE TABLE IF NOT EXISTS t_group (
   id BIGINT NOT NULL PRIMARY KEY,
@@ -62,7 +78,7 @@ CREATE TABLE IF NOT EXISTS t_message (
   to_user_id BIGINT NULL COMMENT 'single chat target userId',
   msg_type TINYINT NOT NULL DEFAULT 1 COMMENT '1=text',
   content TEXT NOT NULL,
-  status TINYINT NOT NULL DEFAULT 1 COMMENT '0=SENT,1=SAVED,2=DELIVERED,3=READ,4=REVOKED',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '0=SENT,1=SAVED,2=DELIVERED,3=READ,4=REVOKED,5=RECEIVED,6=DROPPED',
   client_msg_id VARCHAR(64) NULL COMMENT 'client idempotency key',
   server_msg_id VARCHAR(64) NULL COMMENT 'server message id for client (usually equals id)',
   created_at DATETIME(3) NOT NULL,

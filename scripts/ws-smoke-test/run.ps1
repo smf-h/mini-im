@@ -1,11 +1,17 @@
 param(
   [string]$WsUrl = "ws://127.0.0.1:9001/ws",
+  [string]$HttpBase = "http://127.0.0.1:8080",
   [string]$JwtSecret = "change-me-please-change-me-please-change-me",
   [long]$UserA = 10001,
   [long]$UserB = 10002,
   [int]$TimeoutMs = 8000,
-  [ValidateSet("all","basic","idempotency","offline","cron")]
+  [ValidateSet("all","basic","idempotency","offline","cron","auth","friend_request")]
   [string]$Scenario = "all",
+  [int]$AuthTokenTtlSeconds = 2,
+  [switch]$CheckRedis,
+  [string]$RedisHost = "127.0.0.1",
+  [int]$RedisPort = 6379,
+  [string]$RedisPassword = "",
   [switch]$CheckDb,
   [string]$DbHost = "127.0.0.1",
   [string]$DbName = "mini_im",
@@ -41,14 +47,41 @@ try {
 
   $json = java -cp "$outDir" `
     -Dws="$WsUrl" `
+    -Dhttp="$HttpBase" `
     -DjwtSecret="$JwtSecret" `
     -DuserA="$UserA" `
     -DuserB="$UserB" `
     -DtimeoutMs="$TimeoutMs" `
     -Dscenario="$Scenario" `
+    -DauthTokenTtlSeconds="$AuthTokenTtlSeconds" `
+    -DredisHost="$RedisHost" `
+    -DredisPort="$RedisPort" `
+    -DredisPassword="$RedisPassword" `
     WsSmokeTest
 
   $result = $json | ConvertFrom-Json
+
+  # 3) Optional: read redis route keys via redis-cli and attach to output JSON
+  if ($CheckRedis) {
+    if (-not (Get-Command redis-cli -ErrorAction SilentlyContinue)) {
+      throw "redis-cli not found in PATH"
+    }
+
+    $redisArgs = @("-h", "$RedisHost", "-p", "$RedisPort")
+    if (-not [string]::IsNullOrWhiteSpace($RedisPassword)) {
+      $redisArgs += @("-a", "$RedisPassword")
+    }
+
+    $redis = [ordered]@{}
+    foreach ($uid in @($UserA, $UserB)) {
+      $key = "im:gw:route:$uid"
+      $value = & redis-cli @redisArgs GET $key
+      $ttl = & redis-cli @redisArgs TTL $key
+      $redis["$key"] = [ordered]@{ value = $value; ttlSeconds = $ttl }
+    }
+
+    $result | Add-Member -NotePropertyName "redis" -NotePropertyValue $redis -Force
+  }
 
   # 3) Optional: query DB status via mysql CLI and attach to output JSON
   if ($CheckDb) {
@@ -75,7 +108,15 @@ try {
         if ($null -eq $scenarioObj.serverMsgId) { continue }
 
         $serverMsgId = [string]$scenarioObj.serverMsgId
-        $status = mysql -u "$DbUser" -h "$DbHost" -N -s -D "$DbName" -e "SELECT status FROM t_message WHERE server_msg_id='${serverMsgId}' LIMIT 1;"
+        $dbTable = $scenarioObj.dbTable
+        if ($dbTable -eq "t_friend_request") {
+          if ($serverMsgId -notmatch '^[0-9]+$') {
+            throw "unexpected friend_request serverMsgId (not digits): $serverMsgId"
+          }
+          $status = mysql -u "$DbUser" -h "$DbHost" -N -s -D "$DbName" -e "SELECT status FROM t_friend_request WHERE id=${serverMsgId} LIMIT 1;"
+        } else {
+          $status = mysql -u "$DbUser" -h "$DbHost" -N -s -D "$DbName" -e "SELECT status FROM t_message WHERE server_msg_id='${serverMsgId}' LIMIT 1;"
+        }
         $scenarioObj | Add-Member -NotePropertyName "dbStatus" -NotePropertyValue ($status.Trim()) -Force
       }
     }
