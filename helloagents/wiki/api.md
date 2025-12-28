@@ -60,6 +60,9 @@
 - `POST /friend/request/decide`
   - body：`{ "requestId": 123, "action": "accept|reject" }`
   - 响应：`{ "singleChatId": 123|null }`（accept 时返回会话 id）
+- `POST /friend/request/by-code`
+  - body：`{ "toFriendCode": "AB12CD34", "message": "..." }`
+  - 响应：`{ "requestId": "123", "toUserId": "10002" }`
 
 实现位置：`com.miniim.domain.controller.FriendRequestController`
 
@@ -67,8 +70,68 @@
 - `GET /user/basic?ids=10001,10002`
   - 用途：前端获取昵称/用户名（例如站内通知、列表展示）
   - 响应：`[{ "id": "10001", "username": "...", "nickname": "..." }, ...]`
+- `GET /user/profile?userId=10001`
+  - 用途：公开个人主页
+  - 响应（示例字段，以代码为准）：`{ "id":"10001", "username":"...", "nickname":"...", "avatarUrl":null, "status":1, "friendCode":"AB12CD34" }`
 
 实现位置：`com.miniim.domain.controller.UserController`
+、`com.miniim.domain.controller.MeController`
+
+### Group（群）
+- `POST /group/create`
+  - body：`{ "name": "xxx" }`（`memberUserIds` 已不支持：群成员通过“群码申请入群”加入）
+  - 响应：`{ "groupId": "123" }`
+- `GET /group/basic?ids=20001,20002`
+  - 用途：前端缓存群名（toast/群页标题等）
+  - 说明：仅返回“当前用户是成员”的群
+  - 响应：`[{ "id":"20001", "name":"xxx", "avatarUrl": null }, ...]`
+- `GET /group/profile/by-id?groupId=20001`
+  - 用途：群资料（群聊页入口）
+  - 返回补充（以代码为准）：`groupCode`、`memberCount`、`myRole`、`isMember`
+- `GET /group/profile/by-code?groupCode=ABCDEFGH`
+  - 用途：通过群码查群（用于申请入群）
+- `GET /group/member/list?groupId=20001`
+  - 用途：成员列表（仅成员可见）
+- `POST /group/code/reset`
+  - 用途：重置群码（owner/admin；服务端限频；返回 42900 表示冷却未到）
+- `POST /group/member/kick`
+  - 用途：踢人（owner 可踢非 owner；admin 仅可踢 member）
+- `POST /group/member/set-admin`
+  - 用途：设/取消管理员（仅 owner）
+- `POST /group/owner/transfer`
+  - 用途：转让群主（仅 owner）
+- `POST /group/leave`
+  - 用途：退出群（owner 需先转让）
+
+实现位置：`com.miniim.domain.controller.GroupController`
+、`com.miniim.domain.controller.GroupProfileController`
+
+### Group Join（申请入群）
+- `POST /group/join/request`
+  - body：`{ "groupCode":"ABCDEFGH", "message":"..." }`
+  - 响应：`{ "requestId":"123" }`（重复申请会返回已有 pending 的 requestId）
+- `GET /group/join/requests?groupId=20001&status=pending&limit=20&lastId=...`
+  - 用途：群主/管理员查看待处理申请
+- `POST /group/join/decide`
+  - body：`{ "requestId":123, "action":"accept|reject" }`
+
+实现位置：`com.miniim.domain.controller.GroupJoinController`
+
+### Group Conversations（群会话列表）
+- `GET /group/conversation/cursor?limit=20&lastUpdatedAt=...&lastId=...`
+  - 语义：按 `updatedAt` 倒序（次序：updatedAt desc, id desc），返回下一页游标
+  - 约束：`lastUpdatedAt` 与 `lastId` 必须同时为空或同时存在
+  - 返回补充（以代码为准）：
+    - `unreadCount`：总未读（基于 `t_group_member.last_read_msg_id` 计算）
+    - `mentionUnreadCount`：@我/回复我 未读（基于稀疏索引表 `t_message_mention` 计算）
+
+实现位置：`com.miniim.domain.controller.GroupConversationController`
+
+### Group Messages（群消息查询）
+- `GET /group/message/cursor?groupId=xxx&limit=20&lastId=yyy`
+  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+
+实现位置：`com.miniim.domain.controller.GroupMessageController`
 
 ---
 
@@ -110,7 +173,10 @@
 - `AUTH`：首包鉴权（兼容旧客户端）。
 - `REAUTH`：续期（刷新服务端记录的 token 过期时间）。
 - `SINGLE_CHAT`：单聊发送消息（当前仅 TEXT）。
+- `GROUP_CHAT`：群聊发送消息（当前仅 TEXT；重要消息= @我/回复我）。
 - `FRIEND_REQUEST`：发起好友申请（先落库，必要时 best-effort 推送给对方）。
+- `GROUP_JOIN_REQUEST`：有人申请入群（服务端推送给群主/管理员，best-effort）。
+- `GROUP_JOIN_DECISION`：入群申请处理结果（服务端推送给申请者，best-effort）。
 - `ACK`：业务回执（用于幂等确认/接收确认）。
 - `ERROR`：错误回包。
 
@@ -135,6 +201,34 @@
   - `from`（服务端确认的发送方 userId）
   - `to`（接收方 userId）
   - `clientMsgId`、`serverMsgId`、`body`、`msgType`
+
+---
+
+## GROUP_CHAT（客户端 ↔ 服务端）
+
+### 请求（客户端 → 服务端）
+- 必填字段：
+  - `type="GROUP_CHAT"`
+  - `clientMsgId`：客户端幂等键（客户端重发必须保持不变）
+  - `groupId`：群 id
+  - `body`：文本内容（TEXT）
+- 可选字段：
+  - `mentions`：`@` 提及的 userId 列表（字符串数组，避免 JS number 精度问题；用于服务端计算“重要消息”并落库稀疏索引）
+  - `replyToServerMsgId`：回复/引用的目标消息 id（服务端消息 id，通常等于 msgId 的字符串形式）
+  - `msgType`：当前建议固定 `TEXT`
+  - `ts`：客户端时间戳（仅用于展示/诊断）
+
+### ACK（服务端 → 发起方）
+- 落库成功后回：`type="ACK"`
+  - `ackType="SAVED"`
+  - `clientMsgId` 原样回传
+  - `serverMsgId`：服务端生成的消息唯一标识（建议=msgId 的字符串形式）
+
+### 投递（服务端 → 群成员）
+- 投递 payload 为 `type="GROUP_CHAT"`，包含：
+  - `from`、`groupId`、`clientMsgId`、`serverMsgId`、`body`、`msgType`
+  - `important=true`：该条消息对“当前接收方”是否重要（@我/回复我）；非重要时该字段为空
+
 
 ### ACK_RECEIVED（接收方 → 服务端）
 - 用途：接收方确认“已收到消息”，服务端据此更新数据库消息状态（`RECEIVED`）。

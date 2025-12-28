@@ -30,6 +30,12 @@ public class UserEntity {
 
     private String avatarUrl;
 
+    /** FriendCode：不可枚举的加好友码。 */
+    private String friendCode;
+
+    /** FriendCode 最近一次生成/重置时间（用于限频）。 */
+    private LocalDateTime friendCodeUpdatedAt;
+
     /** 用户状态：见 {@link UserStatus}（数据库仍存数字）。 */
     private UserStatus status;
 

@@ -72,3 +72,9 @@ im:
     # 可靠投递相关（服务端等待 ACK 的时间）
     ack-timeout-ms: 5000
     max-retry: 3
+
+  code:
+    # FriendCode/GroupCode：用于“按码加好友/申请入群”（不可枚举，可重置限频）
+    friend-code-length: 8
+    group-code-length: 8
+    reset-cooldown-seconds: 86400

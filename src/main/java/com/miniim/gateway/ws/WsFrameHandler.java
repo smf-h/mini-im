@@ -7,17 +7,22 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.miniim.auth.service.JwtService;
+import com.miniim.domain.entity.GroupMemberEntity;
 import com.miniim.domain.entity.MessageEntity;
+import com.miniim.domain.entity.MessageMentionEntity;
 import com.miniim.domain.enums.AckType;
 import com.miniim.domain.enums.ChatType;
 import com.miniim.domain.enums.FriendRequestStatus;
 import com.miniim.domain.enums.MessageStatus;
 import com.miniim.domain.enums.MessageType;
+import com.miniim.domain.enums.MentionType;
 import com.miniim.domain.entity.FriendRequestEntity;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMapper;
+import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.ConversationService;
 import com.miniim.domain.service.FriendRequestService;
+import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatMemberService;
 import com.miniim.domain.service.SingleChatService;
@@ -37,7 +42,12 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -57,6 +67,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private  final SingleChatService singleChatService;
     private final SingleChatMemberService singleChatMemberService;
     private final GroupMemberMapper groupMemberMapper;
+    private final MessageMentionMapper messageMentionMapper;
+    private final GroupService groupService;
     private final Executor dbExecutor;
     private final ClientMsgIdIdempotency idempotency;
     private final UserService userService;
@@ -70,6 +82,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                           SingleChatService singleChatService,
                           SingleChatMemberService singleChatMemberService,
                           GroupMemberMapper groupMemberMapper,
+                          MessageMentionMapper messageMentionMapper,
+                          GroupService groupService,
                           Executor dbExecutor, ClientMsgIdIdempotency idempotency, UserService userService) {
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
@@ -81,6 +95,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.singleChatService = singleChatService;
         this.singleChatMemberService = singleChatMemberService;
         this.groupMemberMapper = groupMemberMapper;
+        this.messageMentionMapper = messageMentionMapper;
+        this.groupService = groupService;
         this.dbExecutor = dbExecutor;
         this.idempotency = idempotency;
         this.userService = userService;
@@ -360,29 +376,169 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             return;
         }
 
-        msg.setFrom(fromUserId);
-        msg.setTs(Instant.now().toEpochMilli());
-
-        int delivered = 0;
-        for (Channel ch : sessionRegistry.getAllChannels()) {
-            if (ch == null || ch == channel) {
-                continue;
-            }
-            if (!ch.isActive()) {
-                continue;
-            }
-            write(ch, msg);
-            delivered++;
+        Long groupId = msg.getGroupId();
+        long memberCnt = groupMemberMapper.selectCount(new LambdaQueryWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId)
+                .eq(GroupMemberEntity::getUserId, fromUserId));
+        if (memberCnt <= 0) {
+            writeError(ctx, "not_group_member", msg.getClientMsgId(), null);
+            return;
         }
 
-        WsEnvelope ack = new WsEnvelope();
-        ack.type = "ACK";
-        ack.from = fromUserId;
-        ack.clientMsgId = msg.getClientMsgId();
-        ack.ackType = "DELIVERED";
-        ack.body = "delivered=" + delivered;
-        ack.ts = Instant.now().toEpochMilli();
-        write(ctx, ack);
+        List<GroupMemberEntity> members = groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId));
+        Set<Long> memberIds = new HashSet<>();
+        if (members != null) {
+            for (GroupMemberEntity m : members) {
+                if (m == null || m.getUserId() == null || m.getUserId() <= 0) {
+                    continue;
+                }
+                memberIds.add(m.getUserId());
+            }
+        }
+
+        final long ts = Instant.now().toEpochMilli();
+        Long messageId = IdWorker.getId();
+        String serverMsgId = String.valueOf(messageId);
+
+        String idempotencyKey = idempotency.key(fromUserId.toString(), "GROUP_CHAT:" + groupId + ":" + msg.getClientMsgId());
+        ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
+        newClaim.setServerMsgId(serverMsgId);
+        ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idempotencyKey, newClaim);
+        if (existed != null) {
+            writeAck(ctx, fromUserId, msg.getClientMsgId(), existed.getServerMsgId(), AckType.SAVED.getDesc());
+            return;
+        }
+
+        MessageEntity messageEntity = new MessageEntity();
+        messageEntity.setId(messageId);
+        messageEntity.setServerMsgId(serverMsgId);
+        messageEntity.setChatType(ChatType.GROUP);
+        messageEntity.setGroupId(groupId);
+        messageEntity.setFromUserId(fromUserId);
+        MessageType messageType = MessageType.fromString(msg.getMsgType());
+        messageEntity.setMsgType(messageType == null ? MessageType.TEXT : messageType);
+        messageEntity.setStatus(MessageStatus.SAVED);
+        messageEntity.setContent(msg.getBody());
+        messageEntity.setClientMsgId(msg.getClientMsgId());
+
+        Map<Long, MentionType> importantTargets = new LinkedHashMap<>();
+        if (msg.getMentions() != null) {
+            for (String rawUid : msg.getMentions()) {
+                Long uid = parsePositiveLongOrNull(rawUid);
+                if (uid == null) {
+                    continue;
+                }
+                if (uid.equals(fromUserId)) {
+                    continue;
+                }
+                if (!memberIds.contains(uid)) {
+                    continue;
+                }
+                importantTargets.putIfAbsent(uid, MentionType.MENTION);
+            }
+        }
+
+        if (msg.getReplyToServerMsgId() != null && !msg.getReplyToServerMsgId().isBlank()) {
+            MessageEntity replied = null;
+            try {
+                long rid = Long.parseLong(msg.getReplyToServerMsgId());
+                replied = messageService.getById(rid);
+            } catch (NumberFormatException ignore) {
+                // ignore
+            }
+            if (replied == null) {
+                replied = messageService.getOne(new LambdaQueryWrapper<MessageEntity>()
+                        .eq(MessageEntity::getServerMsgId, msg.getReplyToServerMsgId())
+                        .last("limit 1"));
+            }
+            if (replied != null && replied.getChatType() == ChatType.GROUP
+                    && replied.getGroupId() != null && replied.getGroupId().equals(groupId)) {
+                Long repliedUserId = replied.getFromUserId();
+                if (repliedUserId != null && repliedUserId > 0 && !repliedUserId.equals(fromUserId) && memberIds.contains(repliedUserId)) {
+                    importantTargets.put(repliedUserId, MentionType.REPLY);
+                }
+            }
+        }
+
+        CompletableFuture<Void> saveFuture = CompletableFuture.runAsync(() -> {
+            messageService.save(messageEntity);
+            groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
+                    .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
+                    .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
+
+            if (!importantTargets.isEmpty()) {
+                List<MessageMentionEntity> rows = new ArrayList<>();
+                LocalDateTime now = LocalDateTime.now();
+                for (Map.Entry<Long, MentionType> e : importantTargets.entrySet()) {
+                    MessageMentionEntity mm = new MessageMentionEntity();
+                    mm.setId(IdWorker.getId());
+                    mm.setGroupId(groupId);
+                    mm.setMessageId(messageId);
+                    mm.setMentionedUserId(e.getKey());
+                    mm.setMentionType(e.getValue());
+                    mm.setCreatedAt(now);
+                    rows.add(mm);
+                }
+                messageMentionMapper.insertBatch(rows);
+            }
+        }, dbExecutor).orTimeout(3, TimeUnit.SECONDS);
+
+        saveFuture.whenComplete((v, error) -> {
+            if (error != null) {
+                log.error("save group message failed: {}", error.toString());
+                idempotency.remove(idempotencyKey);
+                ctx.executor().execute(() -> writeError(ctx, "internal_error", msg.getClientMsgId(), serverMsgId));
+                return;
+            }
+
+            ctx.executor().execute(() -> writeAck(ctx, fromUserId, msg.getClientMsgId(), serverMsgId, AckType.SAVED.getDesc()));
+
+            for (Long uid : memberIds) {
+                List<Channel> channels = sessionRegistry.getChannels(uid);
+                if (channels == null || channels.isEmpty()) {
+                    continue;
+                }
+                boolean important = importantTargets.containsKey(uid);
+                for (Channel ch : channels) {
+                    if (ch == null || !ch.isActive()) {
+                        continue;
+                    }
+                    if (uid.equals(fromUserId) && ch == channel) {
+                        continue;
+                    }
+                    WsEnvelope out = new WsEnvelope();
+                    out.type = "GROUP_CHAT";
+                    out.from = fromUserId;
+                    out.groupId = groupId;
+                    out.clientMsgId = msg.getClientMsgId();
+                    out.serverMsgId = serverMsgId;
+                    out.msgType = msg.getMsgType();
+                    out.body = msg.getBody();
+                    out.ts = ts;
+                    if (important) {
+                        out.important = true;
+                    }
+                    ch.eventLoop().execute(() -> write(ch, out));
+                }
+            }
+        });
+    }
+
+    private static Long parsePositiveLongOrNull(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = raw.trim();
+        if (s.isEmpty()) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(s);
+            return v > 0 ? v : null;
+        } catch (NumberFormatException ignore) {
+            return null;
+        }
     }
 
     private void handleAck(ChannelHandlerContext ctx, WsEnvelope msg) {
@@ -623,10 +779,26 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             }
 
             for (MessageEntity msgEntity : singleList) {
-                writePending(target, userId, msgEntity);
+                writePending(target, userId, msgEntity, false);
+            }
+
+            Set<Long> importantMsgIds = new HashSet<>();
+            if (groupList != null && !groupList.isEmpty()) {
+                List<Long> ids = groupList.stream().map(MessageEntity::getId).filter(x -> x != null && x > 0).toList();
+                if (!ids.isEmpty()) {
+                    try {
+                        List<Long> hits = messageMentionMapper.selectMentionedMessageIdsForUser(userId, ids);
+                        if (hits != null) {
+                            importantMsgIds.addAll(hits);
+                        }
+                    } catch (Exception ignore) {
+                        // ignore
+                    }
+                }
             }
             for (MessageEntity msgEntity : groupList) {
-                writePending(target, userId, msgEntity);
+                boolean important = msgEntity != null && msgEntity.getId() != null && importantMsgIds.contains(msgEntity.getId());
+                writePending(target, userId, msgEntity, important);
             }
         }, dbExecutor).orTimeout(3, TimeUnit.SECONDS).exceptionally(e -> {
             log.error("resend pending messages failed: {}", e.toString());
@@ -634,7 +806,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         });
     }
 
-    private void writePending(Channel target, long userId, MessageEntity msgEntity) {
+    private void writePending(Channel target, long userId, MessageEntity msgEntity, boolean important) {
         if (msgEntity == null) {
             return;
         }
@@ -648,6 +820,9 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         envelope.setBody(msgEntity.getContent());
         envelope.setMsgType(msgEntity.getMsgType() == null ? null : msgEntity.getMsgType().getDesc());
         envelope.setTs(toEpochMilli(msgEntity.getCreatedAt()));
+        if (important) {
+            envelope.setImportant(true);
+        }
 
         target.eventLoop().execute(() -> {
             ChannelFuture write = write(target, envelope);

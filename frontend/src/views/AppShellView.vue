@@ -4,12 +4,14 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
+import { useGroupStore } from '../stores/groups'
 import { useNotifyStore, type Toast } from '../stores/notify'
 import type { WsEnvelope } from '../types/ws'
 
 const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
+const groups = useGroupStore()
 const notify = useNotifyStore()
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +40,10 @@ function logout() {
 
 function isChatRouteWithPeer(peerId: string) {
   return route.path === `/chat/${peerId}`
+}
+
+function isGroupRouteWithId(groupId: string) {
+  return route.path === `/group/${groupId}`
 }
 
 function normalizeText(v: unknown) {
@@ -84,6 +90,78 @@ async function handleWsEvent(ev: WsEnvelope) {
       title: name || String(ev.from),
       text: formatToastSnippet(getEnvelopeBody(ev)),
       path: `/chat/${ev.from}`,
+    })
+    return
+  }
+
+  if (ev.type === 'GROUP_CHAT') {
+    if (!ev.groupId) return
+    if (!ev.from) return
+    if (!ev.important) return
+    if (isGroupRouteWithId(ev.groupId)) return
+
+    try {
+      await groups.ensureBasics([ev.groupId])
+      await users.ensureBasics([ev.from])
+    } catch {
+      // ignore
+    }
+
+    const groupName = groups.displayName(ev.groupId)
+    const fromName = users.displayName(ev.from)
+    const raw = getEnvelopeBody(ev).trim()
+    notify.push({
+      key: `toast:group_important:${ev.serverMsgId ?? ev.clientMsgId ?? `${ev.groupId}:${ev.from}:${ev.ts ?? ''}`}`,
+      kind: 'message',
+      title: groupName || `群聊 ${ev.groupId}`,
+      text: raw ? `${fromName}: ${formatToastSnippet(raw)}` : `来自 ${fromName}`,
+      path: `/group/${ev.groupId}`,
+    })
+    return
+  }
+
+  if (ev.type === 'GROUP_JOIN_REQUEST') {
+    if (!ev.groupId) return
+    if (!ev.from) return
+
+    try {
+      await groups.ensureBasics([ev.groupId])
+      await users.ensureBasics([ev.from])
+    } catch {
+      // ignore
+    }
+
+    const groupName = groups.displayName(ev.groupId)
+    const fromName = users.displayName(ev.from)
+    notify.push({
+      key: `toast:group_join_request:${ev.serverMsgId ?? ev.clientMsgId ?? `${ev.groupId}:${ev.from}:${ev.ts ?? ''}`}`,
+      kind: 'friend_request',
+      title: groupName || `群 ${ev.groupId}`,
+      text: `入群申请：${fromName}${getEnvelopeBody(ev) ? ` - ${formatToastSnippet(getEnvelopeBody(ev))}` : ''}`,
+      path: `/group/${ev.groupId}/profile`,
+    })
+    return
+  }
+
+  if (ev.type === 'GROUP_JOIN_DECISION') {
+    if (!ev.groupId) return
+    if (!ev.to || ev.to !== auth.userId) return
+
+    try {
+      await groups.ensureBasics([ev.groupId])
+    } catch {
+      // ignore
+    }
+
+    const groupName = groups.displayName(ev.groupId)
+    const decision = (getEnvelopeBody(ev) || '').toUpperCase()
+    const text = decision === 'ACCEPTED' ? '入群申请已通过' : decision === 'REJECTED' ? '入群申请被拒绝' : '入群申请状态更新'
+    notify.push({
+      key: `toast:group_join_decision:${ev.serverMsgId ?? ev.clientMsgId ?? `${ev.groupId}:${ev.ts ?? ''}`}`,
+      kind: 'message',
+      title: groupName || `群 ${ev.groupId}`,
+      text,
+      path: `/group/${ev.groupId}/profile`,
     })
     return
   }
@@ -146,13 +224,14 @@ onMounted(() => {
 
 <template>
   <div class="shell">
-    <header class="topbar">
-      <div class="container row" style="justify-content: space-between">
-        <div class="row" style="gap: 14px">
-          <RouterLink class="brand" to="/conversations">mini-im</RouterLink>
-          <RouterLink class="nav" to="/conversations">会话</RouterLink>
-          <RouterLink class="nav" to="/friends">好友申请</RouterLink>
-        </div>
+      <header class="topbar">
+        <div class="container row" style="justify-content: space-between">
+          <div class="row" style="gap: 14px">
+            <RouterLink class="brand" to="/conversations">mini-im</RouterLink>
+            <RouterLink class="nav" to="/conversations">会话</RouterLink>
+            <RouterLink class="nav" to="/groups">群聊</RouterLink>
+            <RouterLink class="nav" to="/friends">好友申请</RouterLink>
+          </div>
         <div class="row">
           <div class="muted">{{ wsBadge }}</div>
           <div class="muted">uid={{ auth.userId }}</div>

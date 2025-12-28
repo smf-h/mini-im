@@ -58,6 +58,109 @@ export type SingleChatMemberStateDto = {
   peerLastReadMsgId?: Id | null
 }
 
+export type GroupConversationDto = {
+  groupId: Id
+  name: string
+  updatedAt: string
+  unreadCount?: number
+  mentionUnreadCount?: number
+  lastMessage?: {
+    serverMsgId: string
+    fromUserId: Id
+    content: string
+    createdAt: string
+  } | null
+}
+
+export type GroupBasicDto = {
+  id: Id
+  name: string
+  avatarUrl?: string | null
+}
+
+export type CreateGroupResponse = {
+  groupId: Id
+}
+
+export type CreateFriendRequestByCodeResponse = {
+  requestId: Id
+  toUserId: Id
+}
+
+export type UserProfileDto = {
+  id: Id
+  username: string
+  nickname?: string | null
+  avatarUrl?: string | null
+  status?: number | null
+  friendCode?: string | null
+}
+
+export type MeProfileDto = {
+  id: Id
+  username: string
+  nickname?: string | null
+  avatarUrl?: string | null
+  status?: number | null
+  friendCode?: string | null
+  friendCodeUpdatedAt?: string | null
+  friendCodeNextResetAt?: string | null
+}
+
+export type ResetFriendCodeResponse = {
+  friendCode: string
+  friendCodeUpdatedAt?: string | null
+  friendCodeNextResetAt?: string | null
+}
+
+export type MemberRole = 'OWNER' | 'ADMIN' | 'MEMBER'
+
+export type GroupProfileDto = {
+  groupId: Id
+  name: string
+  avatarUrl?: string | null
+  groupCode?: string | null
+  createdBy?: Id | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  memberCount?: number | null
+  myRole?: MemberRole | null
+  isMember?: boolean | null
+}
+
+export type GroupMemberDto = {
+  userId: Id
+  username?: string | null
+  nickname?: string | null
+  avatarUrl?: string | null
+  role: MemberRole
+  joinAt?: string | null
+}
+
+export type GroupJoinRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELED'
+
+export type GroupJoinRequestEntity = {
+  id: Id
+  groupId: Id
+  fromUserId: Id
+  message?: string | null
+  status: GroupJoinRequestStatus
+  handledBy?: Id | null
+  handledAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type GroupJoinRequestResponse = {
+  requestId: Id
+}
+
+export type ResetGroupCodeResponse = {
+  groupCode: string
+  groupCodeUpdatedAt?: string | null
+  groupCodeNextResetAt?: string | null
+}
+
 export type MessageEntity = {
   id: Id
   chatType: number

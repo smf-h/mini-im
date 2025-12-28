@@ -32,6 +32,26 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             <script>
             select m.*
             from t_message m
+            join (
+              select group_id, max(id) as max_id
+              from t_message
+              where chat_type = 2
+                and group_id in
+              <foreach collection="groupIds" item="id" open="(" separator="," close=")">
+                #{id}
+              </foreach>
+              group by group_id
+            ) x
+              on m.group_id = x.group_id
+             and m.id = x.max_id
+            </script>
+            """)
+    List<MessageEntity> selectLastMessagesByGroupIds(@Param("groupIds") List<Long> groupIds);
+
+    @Select("""
+            <script>
+            select m.*
+            from t_message m
             join t_single_chat_member scm
               on scm.single_chat_id = m.single_chat_id
              and scm.user_id = #{userId}
@@ -79,4 +99,24 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             """)
     List<java.util.Map<String, Object>> selectUnreadCountsForUser(@Param("singleChatIds") List<Long> singleChatIds,
                                                                   @Param("userId") long userId);
+
+    @Select("""
+            <script>
+            select m.group_id as groupId, count(*) as unreadCount
+            from t_message m
+            join t_group_member gm
+              on gm.group_id = m.group_id
+             and gm.user_id = #{userId}
+            where m.chat_type = 2
+              and m.group_id in
+              <foreach collection="groupIds" item="id" open="(" separator="," close=")">
+                #{id}
+              </foreach>
+              and m.id &gt; ifnull(gm.last_read_msg_id, 0)
+              and (m.from_user_id is null or m.from_user_id != #{userId})
+            group by m.group_id
+            </script>
+            """)
+    List<java.util.Map<String, Object>> selectGroupUnreadCountsForUser(@Param("groupIds") List<Long> groupIds,
+                                                                       @Param("userId") long userId);
 }

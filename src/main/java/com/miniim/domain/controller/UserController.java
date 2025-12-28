@@ -5,6 +5,7 @@ import com.miniim.common.api.ApiCodes;
 import com.miniim.common.api.Result;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.mapper.UserMapper;
+import com.miniim.domain.service.CodeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,11 +26,22 @@ import java.util.Set;
 public class UserController {
 
     private final UserMapper userMapper;
+    private final CodeService codeService;
 
     public record UserBasicDto(
             Long id,
             String username,
             String nickname
+    ) {
+    }
+
+    public record UserProfileDto(
+            Long id,
+            String username,
+            String nickname,
+            String avatarUrl,
+            Integer status,
+            String friendCode
     ) {
     }
 
@@ -59,6 +71,41 @@ public class UserController {
         return Result.ok(resp);
     }
 
+    @GetMapping("/profile")
+    public Result<UserProfileDto> profile(@RequestParam Long userId) {
+        Long requester = AuthContext.getUserId();
+        if (requester == null) {
+            return Result.fail(ApiCodes.UNAUTHORIZED, "unauthorized");
+        }
+        if (userId == null || userId <= 0) {
+            return Result.fail(ApiCodes.BAD_REQUEST, "bad_user_id");
+        }
+
+        UserEntity u = userMapper.selectById(userId);
+        if (u == null) {
+            return Result.fail(ApiCodes.NOT_FOUND, "not_found");
+        }
+
+        // 公开个人主页：可见 friendCode；如为空则懒生成（避免历史用户无 code）。
+        if (u.getFriendCode() == null || u.getFriendCode().isBlank()) {
+            try {
+                u = codeService.ensureFriendCode(userId);
+            } catch (Exception ignore) {
+                // ignore
+            }
+        }
+
+        Integer status = u.getStatus() == null ? null : u.getStatus().getCode();
+        return Result.ok(new UserProfileDto(
+                u.getId(),
+                u.getUsername(),
+                u.getNickname(),
+                u.getAvatarUrl(),
+                status,
+                u.getFriendCode()
+        ));
+    }
+
     static List<Long> parseIds(String ids, int max) {
         if (ids == null || ids.isBlank()) {
             return List.of();
@@ -81,4 +128,3 @@ public class UserController {
         return new ArrayList<>(set);
     }
 }
-

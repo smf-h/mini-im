@@ -10,6 +10,7 @@
 - 握手鉴权：`WsHandshakeAuthHandler`
 - 帧处理：`WsFrameHandler`
 - 消息封装：`WsEnvelope`
+- 站内/业务通知推送（best-effort）：`com.miniim.gateway.ws.WsPushService`
 - 会话注册：`com.miniim.gateway.session.SessionRegistry`
 - 客户端消息 ID 幂等：`ClientMsgIdIdempotency`（Caffeine 相关配置见 gateway/config）
 - 定时任务：`com.miniim.common.cron.WsCron`（补发/离线标记兜底）

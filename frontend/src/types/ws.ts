@@ -9,6 +9,9 @@ export type WsEnvelope = {
   ackType?: string | null
   msgType?: string | null
   body?: string | null
+  mentions?: string[] | null
+  replyToServerMsgId?: string | null
+  important?: boolean | null
   ts?: number | null
   reason?: string | null
 }

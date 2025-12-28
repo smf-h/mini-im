@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
 import type { MessageEntity, SingleChatMemberStateDto } from '../types/api'
 import type { WsEnvelope } from '../types/ws'
@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
 import { formatTime } from '../utils/format'
+import UiAvatar from '../components/UiAvatar.vue'
 
 type UiMessage = {
   clientMsgId: string
@@ -20,6 +21,7 @@ type UiMessage = {
 }
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
@@ -126,6 +128,10 @@ function scrollToBottom() {
   const el = chatEl.value
   if (!el) return
   el.scrollTop = el.scrollHeight
+}
+
+function openUser(id: string) {
+  void router.push(`/u/${id}`)
 }
 
 function resetAndLoad() {
@@ -372,7 +378,10 @@ onUnmounted(() => {
   <div class="card" style="padding: 14px">
     <div class="row" style="justify-content: space-between; margin-bottom: 10px">
       <h2 style="margin: 0">聊天 {{ peerName }}</h2>
-      <button class="btn" @click="resetAndLoad">刷新</button>
+      <div class="row">
+        <button class="btn" @click="openUser(peerUserId)">对方主页</button>
+        <button class="btn" @click="resetAndLoad">刷新</button>
+      </div>
     </div>
     <div class="muted" style="margin-bottom: 10px">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
 
@@ -381,6 +390,15 @@ onUnmounted(() => {
       <div v-if="done && !loading" class="muted" style="text-align: center; padding: 8px">没有更多历史</div>
 
       <div v-for="m in items" :key="m.clientMsgId" class="msgRow" :class="{ me: m.fromUserId === auth.userId }">
+        <button
+          v-if="m.fromUserId !== auth.userId"
+          class="avatarBtn"
+          type="button"
+          @click="openUser(peerUserId)"
+        >
+          <UiAvatar :text="peerName" :seed="peerUserId" :size="36" />
+        </button>
+
         <div class="bubble" :class="{ me: m.fromUserId === auth.userId }">
           <div class="meta">
             <span class="muted">{{ m.fromUserId === auth.userId ? '我' : peerName }}</span>
@@ -391,6 +409,10 @@ onUnmounted(() => {
           </div>
           <div class="content">{{ m.content }}</div>
         </div>
+
+        <button v-if="m.fromUserId === auth.userId" class="avatarBtn me" type="button" @click="openUser(auth.userId!)">
+          <UiAvatar text="我" :seed="auth.userId" :size="36" />
+        </button>
       </div>
     </div>
 
@@ -420,6 +442,16 @@ onUnmounted(() => {
 }
 .msgRow.me {
   justify-content: flex-end;
+}
+.avatarBtn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  align-self: flex-end;
+}
+.avatarBtn.me {
+  margin-left: 10px;
 }
 .bubble {
   display: inline-block;

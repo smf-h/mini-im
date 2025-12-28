@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
 import type { SingleChatConversationDto } from '../types/api'
 import { formatTime } from '../utils/format'
@@ -8,8 +8,12 @@ import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
 import type { WsEnvelope } from '../types/ws'
+import UiAvatar from '../components/UiAvatar.vue'
+import UiBadge from '../components/UiBadge.vue'
+import UiListItem from '../components/UiListItem.vue'
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
@@ -99,6 +103,12 @@ function applyWsEvent(ev: WsEnvelope) {
   void users.ensureBasics([ev.from])
 }
 
+function openUser(ev: MouseEvent, id: string) {
+  ev.preventDefault()
+  ev.stopPropagation()
+  void router.push(`/u/${id}`)
+}
+
 watch(
   () => ws.events.length,
   () => {
@@ -116,31 +126,31 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="card" style="padding: 14px">
-    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+  <div class="page">
+    <div class="header row" style="justify-content: space-between">
       <h2 style="margin: 0">会话</h2>
       <button class="btn" @click="resetAndLoad">刷新</button>
     </div>
-    <div class="muted" style="margin-bottom: 10px">按 `updatedAt` 倒序，滚动加载。</div>
+    <div class="sub muted">按 `updatedAt` 倒序，滚动加载。</div>
 
     <div class="list" @scroll="onScroll">
-      <div v-for="c in items" :key="c.singleChatId" class="item">
-        <RouterLink :to="`/chat/${c.peerUserId}`" class="itemLink">
-          <div class="convRow">
-            <div class="avatar" aria-hidden="true"></div>
-            <div class="main">
-              <div class="top">
-                <div class="name">
-                  {{ users.displayName(c.peerUserId) }}
-                  <span v-if="(c.unreadCount ?? 0) > 0" class="badge">{{ c.unreadCount }}</span>
-                </div>
-                <div class="time muted">{{ formatTime(c.updatedAt) }}</div>
-              </div>
-              <div class="preview muted">{{ c.lastMessage?.content ?? '（暂无消息）' }}</div>
-            </div>
+      <UiListItem v-for="c in items" :key="c.singleChatId" :to="`/chat/${c.peerUserId}`">
+        <template #left>
+          <button class="avatarBtn" type="button" @click="openUser($event, c.peerUserId)">
+            <UiAvatar :text="users.displayName(c.peerUserId)" :seed="c.peerUserId" :size="46" />
+          </button>
+        </template>
+        <div class="main">
+          <div class="titleRow">
+            <div class="name">{{ users.displayName(c.peerUserId) }}</div>
+            <div class="time">{{ formatTime(c.updatedAt) }}</div>
           </div>
-        </RouterLink>
-      </div>
+          <div class="preview">{{ c.lastMessage?.content ?? '（暂无消息）' }}</div>
+        </div>
+        <template #right>
+          <UiBadge :count="c.unreadCount ?? 0" />
+        </template>
+      </UiListItem>
 
       <div class="muted" style="padding: 10px; text-align: center">
         <span v-if="loading">加载中…</span>
@@ -154,80 +164,58 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.page {
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.header {
+  padding: 14px 14px 10px;
+}
+.sub {
+  padding: 0 14px 10px;
+}
 .list {
   height: calc(100vh - 170px);
   overflow: auto;
-  display: grid;
-  gap: 10px;
-  padding: 6px;
-}
-.item {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  transition: transform 120ms ease, box-shadow 120ms ease;
-}
-.itemLink {
-  display: block;
-  padding: 12px;
-}
-.item:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-}
-.convRow {
-  display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 12px;
-  align-items: center;
-}
-.avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  background: rgba(7, 193, 96, 0.12);
-  border: 1px solid rgba(7, 193, 96, 0.18);
+  padding: 0;
 }
 .main {
   min-width: 0;
 }
-.top {
+.titleRow {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 4px;
 }
 .name {
-  font-weight: 650;
+  font-weight: 750;
+  font-size: 16px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 .time {
   flex: none;
   font-size: 12px;
+  color: var(--text-3);
 }
 .preview {
   font-size: 13px;
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.badge {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 12px;
-  line-height: 18px;
-  text-align: center;
+.avatarBtn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
 }
 </style>

@@ -25,6 +25,10 @@
 | 202512281337 | 微信风格细节美化 | 功能 | ✅已完成 | helloagents/history/2025-12/202512281337_wechat_ui_polish/ |
 | 202512281500 | WS 成员游标：送达/已读/补发 | 功能 | ✅已完成 | helloagents/history/2025-12/202512281500_ws_cursor_delivery_read/ |
 | 202512281609 | 通知增强 + 数据库自动迁移（Flyway） | 功能 | ✅已完成 | helloagents/history/2025-12/202512281609_notify_toast_friend_request_flyway/ |
+| 202512281721 | 配置模板双文件（env + values） | 文档 | ✅已完成 | helloagents/history/2025-12/202512281721_config_env_templates/ |
+| 202512281927 | 小群群聊 + 重要消息稀疏索引（@我/回复我） | 功能 | ✅已完成 | helloagents/history/2025-12/202512281927_group_chat_mentions/ |
+| 202512282014 | 前端视觉系统 + 核心页通栏重构 | 功能 | ✅已完成 | helloagents/history/2025-12/202512282014_wechat_ui_design_system/ |
+| 202512282100 | 申请入群(审批) + 个人主页 + FriendCode/GroupCode | 功能 | ✅已完成 | helloagents/history/2025-12/202512282100_group_join_friendcode_profile/ |
 
 ---
 
@@ -32,7 +36,11 @@
 
 ### 2025-12
 
+- 202512282014_wechat_ui_design_system - 前端微信绿白视觉系统 + 组件化重构
+- 202512282100_group_join_friendcode_profile - 申请入群(审批) + 个人主页 + FriendCode/GroupCode
+- 202512281927_group_chat_mentions - 小群群聊 + 重要消息稀疏索引（@我/回复我）
 - 202512281609_notify_toast_friend_request_flyway - 通知增强 + 数据库自动迁移（Flyway）
+- 202512281721_config_env_templates - 配置模板双文件（env + values）
 - 202512281500_ws_cursor_delivery_read - WS 成员游标：送达/已读/补发
 
 - 202512251200_kb_init - 初始化 helloagents 知识库

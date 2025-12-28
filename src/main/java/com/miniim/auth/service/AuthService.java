@@ -3,6 +3,7 @@ package com.miniim.auth.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.miniim.auth.config.AuthProperties;
 import com.miniim.auth.dto.*;
+import com.miniim.domain.service.CodeService;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.mapper.UserMapper;
 import io.jsonwebtoken.Claims;
@@ -24,6 +25,7 @@ public class AuthService {
     private final TokenHasher tokenHasher;
     private final RefreshTokenStore refreshTokenStore;
     private final AuthProperties props;
+    private final CodeService codeService;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final SecureRandom secureRandom = new SecureRandom();
@@ -33,13 +35,15 @@ public class AuthService {
             JwtService jwtService,
             TokenHasher tokenHasher,
             RefreshTokenStore refreshTokenStore,
-            AuthProperties props
+            AuthProperties props,
+            CodeService codeService
     ) {
         this.userMapper = userMapper;
         this.jwtService = jwtService;
         this.tokenHasher = tokenHasher;
         this.refreshTokenStore = refreshTokenStore;
         this.props = props;
+        this.codeService = codeService;
     }
 
     /**
@@ -79,6 +83,13 @@ public class AuthService {
             }
         } else if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new IllegalArgumentException("invalid_username_or_password");
+        }
+
+        // 确保 friendCode 已生成（用于“按码加好友”与个人主页展示）。
+        try {
+            codeService.ensureFriendCode(user.getId());
+        } catch (Exception e) {
+            log.warn("ensure friendCode failed: userId={}, err={}", user.getId(), e.toString());
         }
 
         String accessToken = jwtService.issueAccessToken(user.getId());

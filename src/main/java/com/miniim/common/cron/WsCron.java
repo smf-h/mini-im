@@ -3,6 +3,7 @@ package com.miniim.common.cron;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniim.domain.entity.MessageEntity;
 import com.miniim.domain.mapper.MessageMapper;
+import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.SingleChatMemberService;
 import com.miniim.gateway.session.SessionRegistry;
 import com.miniim.gateway.ws.WsEnvelope;
@@ -17,7 +18,9 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 可选兜底补发：基于“成员游标(last_delivered_msg_id)”拉取未投递区间。
@@ -31,6 +34,7 @@ import java.util.List;
 public class WsCron {
 
     private final MessageMapper messageMapper;
+    private final MessageMentionMapper messageMentionMapper;
     private final SessionRegistry sessionRegistry;
     private final ObjectMapper objectMapper;
     private final SingleChatMemberService singleChatMemberService;
@@ -63,6 +67,21 @@ public class WsCron {
             return;
         }
 
+        Set<Long> importantMsgIds = new HashSet<>();
+        if (!groupList.isEmpty()) {
+            List<Long> ids = groupList.stream().map(MessageEntity::getId).filter(x -> x != null && x > 0).toList();
+            if (!ids.isEmpty()) {
+                try {
+                    List<Long> hits = messageMentionMapper.selectMentionedMessageIdsForUser(userId, ids);
+                    if (hits != null) {
+                        importantMsgIds.addAll(hits);
+                    }
+                } catch (Exception ignore) {
+                    // ignore
+                }
+            }
+        }
+
         for (Channel target : channels) {
             if (target == null || !target.isActive()) {
                 continue;
@@ -71,12 +90,17 @@ public class WsCron {
                 write(target, userId, msg);
             }
             for (MessageEntity msg : groupList) {
-                write(target, userId, msg);
+                boolean important = msg != null && msg.getId() != null && importantMsgIds.contains(msg.getId());
+                write(target, userId, msg, important);
             }
         }
     }
 
     private void write(Channel target, long userId, MessageEntity msg) {
+        write(target, userId, msg, false);
+    }
+
+    private void write(Channel target, long userId, MessageEntity msg, boolean important) {
         if (msg == null) {
             return;
         }
@@ -90,6 +114,9 @@ public class WsCron {
         envelope.setServerMsgId(msg.getServerMsgId());
         envelope.setMsgType(msg.getMsgType() == null ? null : msg.getMsgType().getDesc());
         envelope.setTs(toEpochMilli(msg.getCreatedAt()));
+        if (important) {
+            envelope.setImportant(true);
+        }
 
         target.eventLoop().execute(() -> {
             try {

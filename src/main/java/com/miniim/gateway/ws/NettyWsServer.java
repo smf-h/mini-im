@@ -5,8 +5,10 @@ import com.miniim.auth.service.JwtService;
 import com.miniim.domain.entity.ConversationEntity;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMapper;
+import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.ConversationService;
 import com.miniim.domain.service.FriendRequestService;
+import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatMemberService;
 import com.miniim.domain.service.SingleChatService;
@@ -50,6 +52,8 @@ public class NettyWsServer implements SmartLifecycle {
     private  final SingleChatService singleChatService;
     private final SingleChatMemberService singleChatMemberService;
     private final GroupMemberMapper groupMemberMapper;
+    private final MessageMentionMapper messageMentionMapper;
+    private final GroupService groupService;
     private final Executor imDbExecutor;
     private final ClientMsgIdIdempotency clientMsgIdIdempotency;
     private final UserService userService;
@@ -70,6 +74,8 @@ public class NettyWsServer implements SmartLifecycle {
                          SingleChatService singleChatService,
                          SingleChatMemberService singleChatMemberService,
                          GroupMemberMapper groupMemberMapper,
+                         MessageMentionMapper messageMentionMapper,
+                         GroupService groupService,
                          @Qualifier("imDbExecutor") Executor imDbExecutor,
                          ClientMsgIdIdempotency clientMsgIdIdempotency, UserService userService) {
         this.props = props;
@@ -83,6 +89,8 @@ public class NettyWsServer implements SmartLifecycle {
         this.singleChatService = singleChatService;
         this.singleChatMemberService = singleChatMemberService;
         this.groupMemberMapper = groupMemberMapper;
+        this.messageMentionMapper = messageMentionMapper;
+        this.groupService = groupService;
         this.imDbExecutor = imDbExecutor;
         this.clientMsgIdIdempotency = clientMsgIdIdempotency;
         this.userService = userService;
@@ -137,7 +145,7 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new WebSocketServerProtocolHandler(wsConfig));
 
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
-                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, messageMapper, friendRequestService, conversationService, singleChatService, singleChatMemberService, groupMemberMapper, imDbExecutor, clientMsgIdIdempotency, userService));
+                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, messageMapper, friendRequestService, conversationService, singleChatService, singleChatMemberService, groupMemberMapper, messageMentionMapper, groupService, imDbExecutor, clientMsgIdIdempotency, userService));
                     }
                 }
                 );

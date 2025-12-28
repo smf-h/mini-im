@@ -14,6 +14,11 @@ public interface MessageService extends IService<MessageEntity> {
     List<MessageEntity> cursorBySingleChatId(Long singleChatId, Long limit, Long lastId);
 
     /**
+     * 按 id 倒序的游标分页：返回 id < lastId 的下一页；lastId 为空表示从最新开始。
+     */
+    List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastId);
+
+    /**
      * 普通分页：按 pageNo/pageSize 返回 Page 对象。
      */
     com.baomidou.mybatisplus.extension.plugins.pagination.Page<MessageEntity> pageBySingleChatId(Long singleChatId, Long pageNo, Long pageSize);

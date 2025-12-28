@@ -9,8 +9,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('./views/AppShellView.vue'),
     children: [
       { path: 'conversations', component: () => import('./views/ConversationsView.vue') },
+      { path: 'groups', component: () => import('./views/GroupsView.vue') },
       { path: 'friends', component: () => import('./views/FriendRequestsView.vue') },
       { path: 'chat/:peerUserId', component: () => import('./views/ChatView.vue') },
+      { path: 'group/:groupId', component: () => import('./views/GroupChatView.vue') },
+      { path: 'group/:groupId/profile', component: () => import('./views/GroupProfileView.vue') },
+      { path: 'u/:userId', component: () => import('./views/UserProfileView.vue') },
     ],
   },
 ]
@@ -28,4 +32,3 @@ router.beforeEach((to) => {
   if (!auth.isLoggedIn) return '/login'
   return true
 })
-

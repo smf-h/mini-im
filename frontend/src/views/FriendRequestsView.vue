@@ -2,12 +2,15 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../services/api'
-import type { FriendRequestEntity } from '../types/api'
+import type { CreateFriendRequestByCodeResponse, FriendRequestEntity } from '../types/api'
 import type { WsEnvelope } from '../types/ws'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
 import { formatTime } from '../utils/format'
+import UiAvatar from '../components/UiAvatar.vue'
+import UiListItem from '../components/UiListItem.vue'
+import UiSegmented from '../components/UiSegmented.vue'
 
 type Box = 'inbox' | 'outbox' | 'all'
 
@@ -22,17 +25,18 @@ const loading = ref(false)
 const done = ref(false)
 const errorMsg = ref<string | null>(null)
 
-const toUserId = ref('')
-const content = ref('hi-friend-request')
+const toFriendCode = ref('')
+const content = ref('你好，我想加你好友')
 const sendStatus = ref<string | null>(null)
-const sendClientMsgId = ref<string | null>(null)
 const wsCursor = ref(0)
 
-const lastId = computed(() => (items.value.length ? items.value[items.value.length - 1]!.id : null))
+const boxOptions = [
+  { value: 'inbox', label: '收到的' },
+  { value: 'outbox', label: '发出的' },
+  { value: 'all', label: '全部' },
+]
 
-function uuid() {
-  return crypto.randomUUID()
-}
+const lastId = computed(() => (items.value.length ? items.value[items.value.length - 1]!.id : null))
 
 async function loadMore() {
   if (loading.value || done.value) return
@@ -74,29 +78,18 @@ function onScroll(e: Event) {
 
 async function sendFriendRequest() {
   sendStatus.value = null
-  const to = toUserId.value.trim()
-  if (!/^[1-9][0-9]*$/.test(to)) {
-    sendStatus.value = 'toUserId 无效'
-    return
-  }
-  if (to === auth.userId) {
-    sendStatus.value = '不能给自己发申请'
-    return
-  }
-
-  const clientMsgId = `fr-${uuid()}`
-  sendClientMsgId.value = clientMsgId
-  sendStatus.value = '发送中…'
-
   try {
-    await ws.connect()
-    ws.send({
-      type: 'FRIEND_REQUEST',
-      clientMsgId,
-      to,
-      body: content.value,
-      ts: Date.now(),
+    const code = toFriendCode.value.trim().toUpperCase()
+    if (!/^[A-Z0-9]{6,16}$/.test(code)) {
+      sendStatus.value = 'FriendCode 无效'
+      return
+    }
+    sendStatus.value = '发送中…'
+    await apiPost<CreateFriendRequestByCodeResponse>(`/friend/request/by-code`, {
+      toFriendCode: code,
+      message: content.value,
     })
+    sendStatus.value = '已发送'
   } catch (e) {
     sendStatus.value = `发送失败: ${String(e)}`
   }
@@ -120,18 +113,6 @@ async function decide(requestId: string, action: 'accept' | 'reject') {
 }
 
 function applyWsEvent(ev: WsEnvelope) {
-  if (ev.type === 'ACK' && (ev.ackType?.toUpperCase() === 'SAVED' || ev.ackType === 'saved')) {
-    if (sendClientMsgId.value && ev.clientMsgId === sendClientMsgId.value) {
-      sendStatus.value = '已发送'
-      return
-    }
-  }
-  if (ev.type === 'ERROR') {
-    if (sendClientMsgId.value && ev.clientMsgId === sendClientMsgId.value) {
-      sendStatus.value = `发送失败: ${ev.reason ?? 'error'}`
-      return
-    }
-  }
   if (ev.type === 'FRIEND_REQUEST') {
     if (!ev.to || ev.to !== auth.userId) return
     resetAndLoad()
@@ -168,49 +149,50 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="card" style="padding: 14px">
-    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+  <div class="page">
+    <div class="header row" style="justify-content: space-between">
       <h2 style="margin: 0">好友申请</h2>
       <button class="btn" @click="resetAndLoad">刷新</button>
     </div>
 
-    <div class="card" style="padding: 12px; margin-bottom: 12px">
-      <div class="row" style="gap: 10px">
-        <input v-model="toUserId" class="input" placeholder="toUserId" style="max-width: 140px" />
+    <div class="sub row" style="justify-content: space-between">
+      <UiSegmented v-model="box" :options="boxOptions" />
+      <div class="muted" style="font-size: 12px">inbox/outbox/all</div>
+    </div>
+
+    <div class="composer">
+      <div class="row" style="gap: 10px; align-items: stretch">
+        <input v-model="toFriendCode" class="input" placeholder="对方 FriendCode" style="max-width: 180px" />
         <input v-model="content" class="input" placeholder="验证消息(<=256)" />
-        <button class="btn primary" @click="sendFriendRequest">发送申请</button>
+        <button class="btn primary" @click="sendFriendRequest">发送</button>
       </div>
       <div v-if="sendStatus" class="muted" style="margin-top: 8px">{{ sendStatus }}</div>
     </div>
 
-    <div class="row" style="gap: 8px; margin-bottom: 10px">
-      <button class="btn" :class="{ primary: box === 'inbox' }" @click="box = 'inbox'">inbox</button>
-      <button class="btn" :class="{ primary: box === 'outbox' }" @click="box = 'outbox'">outbox</button>
-      <button class="btn" :class="{ primary: box === 'all' }" @click="box = 'all'">all</button>
-    </div>
-
     <div class="list" @scroll="onScroll">
-      <div v-for="r in items" :key="r.id" class="item">
-        <div class="row" style="justify-content: space-between; margin-bottom: 6px">
-          <div style="font-weight: 600">#{{ r.id }}</div>
-          <div class="muted" style="font-size: 12px">{{ formatTime(r.createdAt) }}</div>
-        </div>
-        <div class="reqRow">
-          <div class="avatar" aria-hidden="true"></div>
-          <div class="main">
-            <div class="top">
-              <div class="name">{{ displayUser(r.fromUserId) }} → {{ displayUser(r.toUserId) }}</div>
-              <div class="muted" style="font-size: 12px">status={{ r.status }}</div>
-            </div>
-            <div class="preview">{{ r.content ?? '' }}</div>
+      <UiListItem v-for="r in items" :key="r.id">
+        <template #left>
+          <button class="avatarBtn" type="button" @click="router.push(`/u/${r.fromUserId}`)">
+            <UiAvatar :text="displayUser(r.fromUserId)" :seed="r.fromUserId" :size="42" />
+          </button>
+        </template>
+        <div class="main">
+          <div class="titleRow">
+            <div class="name">{{ displayUser(r.fromUserId) }} → {{ displayUser(r.toUserId) }}</div>
+            <div class="time">{{ formatTime(r.createdAt) }}</div>
           </div>
+          <div class="preview">{{ r.content ?? '' }}</div>
         </div>
-
-        <div v-if="box === 'inbox' && r.status === 'PENDING'" class="row" style="margin-top: 10px; justify-content: flex-end">
-          <button class="btn danger" @click="decide(r.id, 'reject')">拒绝</button>
-          <button class="btn primary" @click="decide(r.id, 'accept')">同意</button>
-        </div>
-      </div>
+        <template #right>
+          <div class="rightCol">
+            <div class="statusTag" :data-status="r.status">{{ r.status }}</div>
+            <div v-if="box === 'inbox' && r.status === 'PENDING'" class="actions">
+              <button class="textBtn reject" @click.stop="decide(r.id, 'reject')">拒绝</button>
+              <button class="textBtn accept" @click.stop="decide(r.id, 'accept')">同意</button>
+            </div>
+          </div>
+        </template>
+      </UiListItem>
 
       <div class="muted" style="padding: 10px; text-align: center">
         <span v-if="loading">加载中…</span>
@@ -224,58 +206,102 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.page {
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.header {
+  padding: 14px 14px 10px;
+}
+.sub {
+  padding: 0 14px 10px;
+}
+.composer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  background: rgba(0, 0, 0, 0.015);
+}
 .list {
   height: calc(100vh - 290px);
   overflow: auto;
-  display: grid;
-  gap: 10px;
-  padding: 6px;
-}
-.item {
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  transition: transform 120ms ease, box-shadow 120ms ease;
-}
-.item:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-}
-.reqRow {
-  display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 12px;
-  align-items: start;
-}
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  background: rgba(7, 193, 96, 0.12);
-  border: 1px solid rgba(7, 193, 96, 0.18);
+  padding: 0;
 }
 .main {
   min-width: 0;
 }
-.top {
+.titleRow {
   display: flex;
-  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .name {
-  font-weight: 650;
+  font-weight: 750;
+  font-size: 15px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.time {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-3);
+}
 .preview {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 13px;
-  color: var(--text);
+  color: var(--text-2);
+}
+.rightCol {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+.statusTag {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.statusTag[data-status='PENDING'] {
+  color: rgba(59, 130, 246, 0.9);
+}
+.statusTag[data-status='ACCEPTED'] {
+  color: rgba(7, 193, 96, 0.95);
+}
+.statusTag[data-status='REJECTED'] {
+  color: rgba(17, 17, 17, 0.46);
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.textBtn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+.textBtn.accept {
+  color: var(--primary);
+  font-weight: 700;
+}
+.textBtn.reject {
+  color: rgba(17, 17, 17, 0.55);
+}
+.textBtn:active {
+  transform: scale(0.99);
+}
+.avatarBtn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
 }
 </style>

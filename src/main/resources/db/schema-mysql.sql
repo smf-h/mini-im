@@ -7,10 +7,13 @@ CREATE TABLE IF NOT EXISTS t_user (
   password_hash VARCHAR(255) NULL,
   nickname VARCHAR(64) NULL,
   avatar_url VARCHAR(255) NULL,
+  friend_code VARCHAR(16) NULL,
+  friend_code_updated_at DATETIME(3) NULL,
   status TINYINT NOT NULL DEFAULT 1,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
-  UNIQUE KEY uk_user_username (username)
+  UNIQUE KEY uk_user_username (username),
+  UNIQUE KEY uk_user_friend_code (friend_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 单聊会话（两人唯一）
@@ -46,10 +49,13 @@ CREATE TABLE IF NOT EXISTS t_group (
   id BIGINT NOT NULL PRIMARY KEY,
   name VARCHAR(128) NOT NULL,
   avatar_url VARCHAR(255) NULL,
+  group_code VARCHAR(16) NULL,
+  group_code_updated_at DATETIME(3) NULL,
   created_by BIGINT NOT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
-  KEY idx_group_created_by (created_by)
+  KEY idx_group_created_by (created_by),
+  UNIQUE KEY uk_group_group_code (group_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 群成员
@@ -67,6 +73,21 @@ CREATE TABLE IF NOT EXISTS t_group_member (
   UNIQUE KEY uk_group_member (group_id, user_id),
   KEY idx_group_member_user (user_id),
   KEY idx_group_member_group (group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 入群申请
+CREATE TABLE IF NOT EXISTS t_group_join_request (
+  id BIGINT NOT NULL PRIMARY KEY,
+  group_id BIGINT NOT NULL,
+  from_user_id BIGINT NOT NULL,
+  message VARCHAR(256) NULL,
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '1=PENDING,2=ACCEPTED,3=REJECTED,4=CANCELED',
+  handled_by BIGINT NULL,
+  handled_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  KEY idx_gjr_group_status_id (group_id, status, id),
+  KEY idx_gjr_from_status_id (from_user_id, status, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS t_message (
@@ -127,4 +148,16 @@ CREATE TABLE IF NOT EXISTS t_friend_request (
   KEY idx_friend_request_to_status_time (to_user_id, status, created_at),
   KEY idx_friend_request_from_time (from_user_id, created_at),
   KEY idx_friend_request_from_to_status (from_user_id, to_user_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 群聊重要消息稀疏索引（@我/回复我）
+CREATE TABLE IF NOT EXISTS t_message_mention (
+  id BIGINT NOT NULL PRIMARY KEY,
+  group_id BIGINT NOT NULL,
+  message_id BIGINT NOT NULL,
+  mentioned_user_id BIGINT NOT NULL,
+  mention_type TINYINT NOT NULL COMMENT '1=MENTION,2=REPLY,3=AT_ALL',
+  created_at DATETIME(3) NOT NULL,
+  KEY idx_mm_user_group_msg (mentioned_user_id, group_id, message_id),
+  KEY idx_mm_group_msg (group_id, message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
