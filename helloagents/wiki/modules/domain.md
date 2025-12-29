@@ -28,3 +28,12 @@
 ## ACK 存储（规划）
 - 表：`t_message_ack`
 - 用途：存储客户端回执（DELIVERED/READ 等），用于更精细的投递确认与未读统计（后续迭代）。
+
+## 通话记录（Phase1）
+- 表：`t_call_record`
+- 用途：记录单聊 WebRTC 通话的状态流转（ringing/accepted/rejected/canceled/ended/missed/failed）与失败原因/时长。
+- 关键代码（以代码为准）：
+  - Entity：`com.miniim.domain.entity.CallRecordEntity`
+  - Enum：`com.miniim.domain.enums.CallStatus`
+  - Service：`com.miniim.domain.service.CallRecordService`
+  - Controller：`com.miniim.domain.controller.CallRecordController`

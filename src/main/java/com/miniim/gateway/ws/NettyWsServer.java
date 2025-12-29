@@ -6,7 +6,9 @@ import com.miniim.domain.entity.ConversationEntity;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
+import com.miniim.domain.service.CallRecordService;
 import com.miniim.domain.service.ConversationService;
+import com.miniim.domain.service.FriendRelationService;
 import com.miniim.domain.service.FriendRequestService;
 import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
@@ -14,6 +16,7 @@ import com.miniim.domain.service.SingleChatMemberService;
 import com.miniim.domain.service.SingleChatService;
 import com.miniim.domain.service.UserService;
 import com.miniim.gateway.config.GatewayProperties;
+import com.miniim.gateway.session.CallRegistry;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -57,6 +60,9 @@ public class NettyWsServer implements SmartLifecycle {
     private final Executor imDbExecutor;
     private final ClientMsgIdIdempotency clientMsgIdIdempotency;
     private final UserService userService;
+    private final CallRegistry callRegistry;
+    private final CallRecordService callRecordService;
+    private final FriendRelationService friendRelationService;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -77,7 +83,11 @@ public class NettyWsServer implements SmartLifecycle {
                          MessageMentionMapper messageMentionMapper,
                          GroupService groupService,
                          @Qualifier("imDbExecutor") Executor imDbExecutor,
-                         ClientMsgIdIdempotency clientMsgIdIdempotency, UserService userService) {
+                         ClientMsgIdIdempotency clientMsgIdIdempotency,
+                         UserService userService,
+                         CallRegistry callRegistry,
+                         CallRecordService callRecordService,
+                         FriendRelationService friendRelationService) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
@@ -94,6 +104,9 @@ public class NettyWsServer implements SmartLifecycle {
         this.imDbExecutor = imDbExecutor;
         this.clientMsgIdIdempotency = clientMsgIdIdempotency;
         this.userService = userService;
+        this.callRegistry = callRegistry;
+        this.callRecordService = callRecordService;
+        this.friendRelationService = friendRelationService;
     }
 
     @Override
@@ -145,7 +158,26 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new WebSocketServerProtocolHandler(wsConfig));
 
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
-                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, messageMapper, friendRequestService, conversationService, singleChatService, singleChatMemberService, groupMemberMapper, messageMentionMapper, groupService, imDbExecutor, clientMsgIdIdempotency, userService));
+                        p.addLast(new WsFrameHandler(
+                                objectMapper,
+                                jwtService,
+                                sessionRegistry,
+                                messageService,
+                                messageMapper,
+                                friendRequestService,
+                                conversationService,
+                                singleChatService,
+                                singleChatMemberService,
+                                groupMemberMapper,
+                                messageMentionMapper,
+                                groupService,
+                                imDbExecutor,
+                                clientMsgIdIdempotency,
+                                userService,
+                                callRegistry,
+                                callRecordService,
+                                friendRelationService
+                        ));
                     }
                 }
                 );

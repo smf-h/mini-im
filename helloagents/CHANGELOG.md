@@ -17,6 +17,7 @@
 
 ### 新增
 - 单聊（WS）：SAVED 落库确认、ACK_RECEIVED 接收确认、定时补发与离线标记（实现细节以代码为准）
+- 单聊视频通话（WebRTC，Phase1）：WS `CALL_*` 信令（invite/accept/reject/cancel/end/ice/timeout）+ 通话记录 HTTP（`/call/record/cursor`、`/call/record/list`）
 - 鉴权（WS）：新增 REAUTH（续期），允许在连接不断开的情况下刷新 accessToken 过期时间
 - 好友申请（WS+HTTP）：新增 `FRIEND_REQUEST`（WS 落库 ACK(saved) + 在线 best-effort 推送）与 HTTP 列表接口（cursor/list）
 - 联调前端：将 `frontend/` 替换为 Vue3+TypeScript 站点（登录/会话/聊天/好友申请）

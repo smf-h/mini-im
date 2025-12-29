@@ -63,6 +63,25 @@ public class WsEnvelope {
      */
     public Boolean important;
 
+    /** 单聊通话：通话 id（服务端生成，long 语义按字符串传输）。 */
+    public Long callId;
+
+    /** 单聊通话：通话类型（Phase1: video）。 */
+    public String callKind;
+
+    /** WebRTC SDP（offer/answer）。 */
+    public String sdp;
+
+    /** WebRTC ICE candidate（candidate 字符串）。 */
+    public String iceCandidate;
+
+    public String iceSdpMid;
+
+    public Integer iceSdpMLineIndex;
+
+    /** 通话失败/拒绝原因（用于 UI 展示与记录）。 */
+    public String callReason;
+
     /** 时间戳（毫秒）。一般用于客户端展示/排序/粗略诊断。 */
     public Long ts;
 

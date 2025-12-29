@@ -7,10 +7,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.miniim.auth.service.JwtService;
+import com.miniim.domain.entity.CallRecordEntity;
+import com.miniim.domain.entity.FriendRelationEntity;
 import com.miniim.domain.entity.GroupMemberEntity;
 import com.miniim.domain.entity.MessageEntity;
 import com.miniim.domain.entity.MessageMentionEntity;
 import com.miniim.domain.enums.AckType;
+import com.miniim.domain.enums.CallStatus;
 import com.miniim.domain.enums.ChatType;
 import com.miniim.domain.enums.FriendRequestStatus;
 import com.miniim.domain.enums.MessageStatus;
@@ -20,13 +23,16 @@ import com.miniim.domain.entity.FriendRequestEntity;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
+import com.miniim.domain.service.CallRecordService;
 import com.miniim.domain.service.ConversationService;
+import com.miniim.domain.service.FriendRelationService;
 import com.miniim.domain.service.FriendRequestService;
 import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatMemberService;
 import com.miniim.domain.service.SingleChatService;
 import com.miniim.domain.service.UserService;
+import com.miniim.gateway.session.CallRegistry;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
@@ -56,6 +62,9 @@ import java.util.concurrent.TimeUnit;
 public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFrame> {
 
     private static final int MAX_BODY_LEN = 4096;
+    private static final int MAX_SDP_LEN = 120_000;
+    private static final int MAX_ICE_LEN = 4096;
+    private static final int CALL_RING_TIMEOUT_SEC = 30;
 
     private final ObjectMapper objectMapper;
     private final JwtService jwtService;
@@ -72,6 +81,9 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private final Executor dbExecutor;
     private final ClientMsgIdIdempotency idempotency;
     private final UserService userService;
+    private final CallRegistry callRegistry;
+    private final CallRecordService callRecordService;
+    private final FriendRelationService friendRelationService;
     public WsFrameHandler(ObjectMapper objectMapper,
                           JwtService jwtService,
                           SessionRegistry sessionRegistry,
@@ -84,7 +96,12 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                           GroupMemberMapper groupMemberMapper,
                           MessageMentionMapper messageMentionMapper,
                           GroupService groupService,
-                          Executor dbExecutor, ClientMsgIdIdempotency idempotency, UserService userService) {
+                          Executor dbExecutor,
+                          ClientMsgIdIdempotency idempotency,
+                          UserService userService,
+                          CallRegistry callRegistry,
+                          CallRecordService callRecordService,
+                          FriendRelationService friendRelationService) {
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
         this.sessionRegistry = sessionRegistry;
@@ -100,18 +117,27 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.dbExecutor = dbExecutor;
         this.idempotency = idempotency;
         this.userService = userService;
+        this.callRegistry = callRegistry;
+        this.callRecordService = callRecordService;
+        this.friendRelationService = friendRelationService;
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) throws Exception {
         // 我们约定：客户端发来的每一个 TextWebSocketFrame 都是一段 JSON
         // 用 WsEnvelope 这个“信封对象”承载：type + token + from/to + body + ts ...
-        log.info("received frame {}", redactToken(frame.text()));
+        String raw = frame.text();
         WsEnvelope msg;
         try {
-            msg = objectMapper.readValue(frame.text(), WsEnvelope.class);
-            log.info("received envelope type={}, clientMsgId={}, serverMsgId={}, from={}, to={}",
-                    msg.getType(), msg.getClientMsgId(), msg.getServerMsgId(), msg.getFrom(), msg.getTo());
+            msg = objectMapper.readValue(raw, WsEnvelope.class);
+            if (msg.getType() != null && msg.getType().startsWith("CALL_")) {
+                Long uid = ctx.channel().attr(SessionRegistry.ATTR_USER_ID).get();
+                log.info("received call envelope type={}, userId={}, callId={}", msg.getType(), uid, msg.getCallId());
+            } else {
+                log.info("received frame {}", redactToken(raw));
+                log.info("received envelope type={}, clientMsgId={}, serverMsgId={}, from={}, to={}",
+                        msg.getType(), msg.getClientMsgId(), msg.getServerMsgId(), msg.getFrom(), msg.getTo());
+            }
         } catch (Exception e) {
             writeError(ctx, "bad_json");
             return;
@@ -144,6 +170,12 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             case "GROUP_CHAT" -> handleGroupChat(ctx, msg);
             case "FRIEND_REQUEST" -> handleFriendRequest(ctx, msg);
             case "ACK" -> handleAck(ctx, msg);
+            case "CALL_INVITE" -> handleCallInvite(ctx, msg);
+            case "CALL_ACCEPT" -> handleCallAccept(ctx, msg);
+            case "CALL_REJECT" -> handleCallReject(ctx, msg);
+            case "CALL_CANCEL" -> handleCallCancel(ctx, msg);
+            case "CALL_END" -> handleCallEnd(ctx, msg);
+            case "CALL_ICE" -> handleCallIce(ctx, msg);
             default -> {
                 writeError(ctx, "not_implemented", msg.getClientMsgId(), null);
             }
@@ -573,6 +605,527 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
         // 未处理其他类型
         return ;
+    }
+
+    private void handleCallInvite(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, null, "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallInvite(ctx, msg)) {
+            return;
+        }
+
+        long callerUserId = fromUserId;
+        long calleeUserId = msg.getTo();
+        if (callerUserId == calleeUserId) {
+            writeCallError(ctx, null, "cannot_call_self", null, msg.getClientMsgId());
+            return;
+        }
+
+        boolean friend = friendRelationService.count(new LambdaQueryWrapper<FriendRelationEntity>()
+                .nested(w -> w.eq(FriendRelationEntity::getUser1Id, callerUserId).eq(FriendRelationEntity::getUser2Id, calleeUserId)
+                        .or()
+                        .eq(FriendRelationEntity::getUser1Id, calleeUserId).eq(FriendRelationEntity::getUser2Id, callerUserId))) > 0;
+        if (!friend) {
+            writeCallError(ctx, null, "not_friend", null, msg.getClientMsgId());
+            return;
+        }
+
+        if (callRegistry.isBusy(callerUserId) || callRegistry.isBusy(calleeUserId)) {
+            long callId = IdWorker.getId();
+            persistCallFailed(callId, callerUserId, calleeUserId, "busy");
+            writeCallError(ctx, callId, "busy", "busy", msg.getClientMsgId());
+            return;
+        }
+
+        List<Channel> calleeChannels = sessionRegistry.getChannels(calleeUserId);
+        boolean calleeOnline = calleeChannels != null && calleeChannels.stream().anyMatch(ch -> ch != null && ch.isActive());
+        if (!calleeOnline) {
+            long callId = IdWorker.getId();
+            persistCallFailed(callId, callerUserId, calleeUserId, "offline");
+            writeCallError(ctx, callId, "callee_offline", "offline", msg.getClientMsgId());
+            return;
+        }
+
+        long callId = IdWorker.getId();
+        CallRegistry.CallSession session = callRegistry.tryCreate(callId, callerUserId, calleeUserId);
+        if (session == null) {
+            persistCallFailed(callId, callerUserId, calleeUserId, "busy");
+            writeCallError(ctx, callId, "busy", "busy", msg.getClientMsgId());
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture<Boolean> saveFuture = CompletableFuture
+                .supplyAsync(() -> {
+                    CallRecordEntity record = new CallRecordEntity();
+                    record.setCallId(callId);
+                    record.setCallerUserId(callerUserId);
+                    record.setCalleeUserId(calleeUserId);
+                    record.setStatus(CallStatus.RINGING);
+                    record.setFailReason(null);
+                    record.setStartedAt(now);
+                    return callRecordService.save(record);
+                }, dbExecutor)
+                .orTimeout(3, TimeUnit.SECONDS);
+
+        saveFuture.whenComplete((ok, error) -> {
+            if (error != null || ok == null || !ok) {
+                callRegistry.clear(callId);
+                ctx.executor().execute(() -> writeCallError(ctx, callId, "internal_error", null, msg.getClientMsgId()));
+                return;
+            }
+
+            session.setTimeoutFuture(ctx.executor().schedule(() -> handleCallTimeout(callId), CALL_RING_TIMEOUT_SEC, TimeUnit.SECONDS));
+
+            ctx.executor().execute(() -> {
+                WsEnvelope ack = new WsEnvelope();
+                ack.setType("CALL_INVITE_OK");
+                ack.setFrom(callerUserId);
+                ack.setTo(calleeUserId);
+                ack.setCallId(callId);
+                ack.setCallKind(msg.getCallKind());
+                ack.setClientMsgId(msg.getClientMsgId());
+                ack.setTs(Instant.now().toEpochMilli());
+                write(ctx, ack);
+            });
+
+            WsEnvelope incoming = new WsEnvelope();
+            incoming.setType("CALL_INVITE");
+            incoming.setFrom(callerUserId);
+            incoming.setTo(calleeUserId);
+            incoming.setCallId(callId);
+            incoming.setCallKind(msg.getCallKind());
+            incoming.setSdp(msg.getSdp());
+            incoming.setTs(Instant.now().toEpochMilli());
+            forwardToUser(calleeUserId, incoming);
+        });
+    }
+
+    private void handleCallAccept(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, msg.getCallId(), "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallAccept(ctx, msg)) {
+            return;
+        }
+        Long callId = msg.getCallId();
+        if (callId == null) {
+            writeCallError(ctx, null, "missing_call_id", null, msg.getClientMsgId());
+            return;
+        }
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            writeCallError(ctx, callId, "call_not_found", null, msg.getClientMsgId());
+            return;
+        }
+        long userId = fromUserId;
+        if (!session.isParticipant(userId)) {
+            writeCallError(ctx, callId, "call_not_participant", null, msg.getClientMsgId());
+            return;
+        }
+        if (userId != session.getCalleeUserId()) {
+            writeCallError(ctx, callId, "only_callee_can_accept", null, msg.getClientMsgId());
+            return;
+        }
+        if (session.getStatus() != CallStatus.RINGING) {
+            writeCallError(ctx, callId, "call_not_ringing", null, msg.getClientMsgId());
+            return;
+        }
+
+        session.setStatus(CallStatus.ACCEPTED);
+        session.markAccepted();
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture<Boolean> updateFuture = CompletableFuture
+                .supplyAsync(() -> callRecordService.update(new LambdaUpdateWrapper<CallRecordEntity>()
+                        .eq(CallRecordEntity::getCallId, callId)
+                        .set(CallRecordEntity::getStatus, CallStatus.ACCEPTED)
+                        .set(CallRecordEntity::getAcceptedAt, now)), dbExecutor)
+                .orTimeout(3, TimeUnit.SECONDS);
+
+        updateFuture.whenComplete((ok, error) -> {
+            if (error != null || ok == null || !ok) {
+                ctx.executor().execute(() -> writeCallError(ctx, callId, "internal_error", null, msg.getClientMsgId()));
+                return;
+            }
+
+            long peer = session.peerOf(userId);
+            WsEnvelope out = new WsEnvelope();
+            out.setType("CALL_ACCEPT");
+            out.setFrom(userId);
+            out.setTo(peer);
+            out.setCallId(callId);
+            out.setCallKind(msg.getCallKind());
+            out.setSdp(msg.getSdp());
+            out.setTs(Instant.now().toEpochMilli());
+            forwardToUser(peer, out);
+        });
+    }
+
+    private void handleCallReject(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, msg.getCallId(), "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallBasic(ctx, msg)) {
+            return;
+        }
+        Long callId = msg.getCallId();
+        if (callId == null) {
+            writeCallError(ctx, null, "missing_call_id", null, msg.getClientMsgId());
+            return;
+        }
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            writeCallError(ctx, callId, "call_not_found", null, msg.getClientMsgId());
+            return;
+        }
+        long userId = fromUserId;
+        if (userId != session.getCalleeUserId()) {
+            writeCallError(ctx, callId, "only_callee_can_reject", null, msg.getClientMsgId());
+            return;
+        }
+        if (session.getStatus() != CallStatus.RINGING) {
+            writeCallError(ctx, callId, "call_not_ringing", null, msg.getClientMsgId());
+            return;
+        }
+
+        session.setStatus(CallStatus.REJECTED);
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture<Boolean> updateFuture = CompletableFuture
+                .supplyAsync(() -> callRecordService.update(new LambdaUpdateWrapper<CallRecordEntity>()
+                        .eq(CallRecordEntity::getCallId, callId)
+                        .set(CallRecordEntity::getStatus, CallStatus.REJECTED)
+                        .set(CallRecordEntity::getFailReason, safeCallReason(msg.getCallReason()))
+                        .set(CallRecordEntity::getEndedAt, now)), dbExecutor)
+                .orTimeout(3, TimeUnit.SECONDS);
+
+        updateFuture.whenComplete((ok, error) -> {
+            callRegistry.clear(callId);
+            if (error != null || ok == null || !ok) {
+                ctx.executor().execute(() -> writeCallError(ctx, callId, "internal_error", null, msg.getClientMsgId()));
+                return;
+            }
+            long peer = session.peerOf(userId);
+            WsEnvelope out = new WsEnvelope();
+            out.setType("CALL_REJECT");
+            out.setFrom(userId);
+            out.setTo(peer);
+            out.setCallId(callId);
+            out.setCallReason(safeCallReason(msg.getCallReason()));
+            out.setTs(Instant.now().toEpochMilli());
+            forwardToUser(peer, out);
+        });
+    }
+
+    private void handleCallCancel(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, msg.getCallId(), "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallBasic(ctx, msg)) {
+            return;
+        }
+        Long callId = msg.getCallId();
+        if (callId == null) {
+            writeCallError(ctx, null, "missing_call_id", null, msg.getClientMsgId());
+            return;
+        }
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            writeCallError(ctx, callId, "call_not_found", null, msg.getClientMsgId());
+            return;
+        }
+        long userId = fromUserId;
+        if (userId != session.getCallerUserId()) {
+            writeCallError(ctx, callId, "only_caller_can_cancel", null, msg.getClientMsgId());
+            return;
+        }
+        if (session.getStatus() != CallStatus.RINGING) {
+            writeCallError(ctx, callId, "call_not_ringing", null, msg.getClientMsgId());
+            return;
+        }
+
+        session.setStatus(CallStatus.CANCELED);
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture<Boolean> updateFuture = CompletableFuture
+                .supplyAsync(() -> callRecordService.update(new LambdaUpdateWrapper<CallRecordEntity>()
+                        .eq(CallRecordEntity::getCallId, callId)
+                        .set(CallRecordEntity::getStatus, CallStatus.CANCELED)
+                        .set(CallRecordEntity::getFailReason, safeCallReason(msg.getCallReason()))
+                        .set(CallRecordEntity::getEndedAt, now)), dbExecutor)
+                .orTimeout(3, TimeUnit.SECONDS);
+
+        updateFuture.whenComplete((ok, error) -> {
+            callRegistry.clear(callId);
+            if (error != null || ok == null || !ok) {
+                ctx.executor().execute(() -> writeCallError(ctx, callId, "internal_error", null, msg.getClientMsgId()));
+                return;
+            }
+            long peer = session.peerOf(userId);
+            WsEnvelope out = new WsEnvelope();
+            out.setType("CALL_CANCEL");
+            out.setFrom(userId);
+            out.setTo(peer);
+            out.setCallId(callId);
+            out.setCallReason(safeCallReason(msg.getCallReason()));
+            out.setTs(Instant.now().toEpochMilli());
+            forwardToUser(peer, out);
+        });
+    }
+
+    private void handleCallEnd(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, msg.getCallId(), "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallBasic(ctx, msg)) {
+            return;
+        }
+        Long callId = msg.getCallId();
+        if (callId == null) {
+            writeCallError(ctx, null, "missing_call_id", null, msg.getClientMsgId());
+            return;
+        }
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            writeCallError(ctx, callId, "call_not_found", null, msg.getClientMsgId());
+            return;
+        }
+        long userId = fromUserId;
+        if (!session.isParticipant(userId)) {
+            writeCallError(ctx, callId, "call_not_participant", null, msg.getClientMsgId());
+            return;
+        }
+
+        CallStatus nextStatus = session.getStatus() == CallStatus.ACCEPTED ? CallStatus.ENDED : (userId == session.getCallerUserId() ? CallStatus.CANCELED : CallStatus.REJECTED);
+        LocalDateTime now = LocalDateTime.now();
+        Integer durationSeconds = null;
+        if (nextStatus == CallStatus.ENDED) {
+            Long acceptedAtMs = session.getAcceptedAtMs();
+            if (acceptedAtMs != null) {
+                long d = Math.max(0, (Instant.now().toEpochMilli() - acceptedAtMs) / 1000);
+                durationSeconds = (int) Math.min(d, Integer.MAX_VALUE);
+            }
+        }
+        final Integer durationSecondsFinal = durationSeconds;
+
+        CompletableFuture<Boolean> updateFuture = CompletableFuture
+                .supplyAsync(() -> {
+                    LambdaUpdateWrapper<CallRecordEntity> w = new LambdaUpdateWrapper<CallRecordEntity>()
+                            .eq(CallRecordEntity::getCallId, callId)
+                            .set(CallRecordEntity::getStatus, nextStatus)
+                            .set(CallRecordEntity::getFailReason, safeCallReason(msg.getCallReason()))
+                            .set(CallRecordEntity::getEndedAt, now);
+                    if (durationSecondsFinal != null) {
+                        w.set(CallRecordEntity::getDurationSeconds, durationSecondsFinal);
+                    }
+                    return callRecordService.update(w);
+                }, dbExecutor)
+                .orTimeout(3, TimeUnit.SECONDS);
+
+        updateFuture.whenComplete((ok, error) -> {
+            callRegistry.clear(callId);
+            if (error != null || ok == null || !ok) {
+                ctx.executor().execute(() -> writeCallError(ctx, callId, "internal_error", null, msg.getClientMsgId()));
+                return;
+            }
+            long peer = session.peerOf(userId);
+            WsEnvelope out = new WsEnvelope();
+            out.setType("CALL_END");
+            out.setFrom(userId);
+            out.setTo(peer);
+            out.setCallId(callId);
+            out.setCallReason(safeCallReason(msg.getCallReason()));
+            out.setTs(Instant.now().toEpochMilli());
+            forwardToUser(peer, out);
+        });
+    }
+
+    private void handleCallIce(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel channel = ctx.channel();
+        Long fromUserId = channel.attr(SessionRegistry.ATTR_USER_ID).get();
+        if (fromUserId == null) {
+            writeCallError(ctx, msg.getCallId(), "unauthorized", null, msg.getClientMsgId());
+            return;
+        }
+        if (!validateCallIce(ctx, msg)) {
+            return;
+        }
+        Long callId = msg.getCallId();
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            writeCallError(ctx, callId, "call_not_found", null, msg.getClientMsgId());
+            return;
+        }
+        long userId = fromUserId;
+        if (!session.isParticipant(userId)) {
+            writeCallError(ctx, callId, "call_not_participant", null, msg.getClientMsgId());
+            return;
+        }
+
+        long peer = session.peerOf(userId);
+        WsEnvelope out = new WsEnvelope();
+        out.setType("CALL_ICE");
+        out.setFrom(userId);
+        out.setTo(peer);
+        out.setCallId(callId);
+        out.setIceCandidate(msg.getIceCandidate());
+        out.setIceSdpMid(msg.getIceSdpMid());
+        out.setIceSdpMLineIndex(msg.getIceSdpMLineIndex());
+        out.setTs(Instant.now().toEpochMilli());
+        forwardToUser(peer, out);
+    }
+
+    private void handleCallTimeout(long callId) {
+        CallRegistry.CallSession session = callRegistry.get(callId);
+        if (session == null) {
+            return;
+        }
+        if (session.getStatus() != CallStatus.RINGING) {
+            return;
+        }
+        session.setStatus(CallStatus.MISSED);
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture<Boolean> updateFuture = CompletableFuture
+                .supplyAsync(() -> callRecordService.update(new LambdaUpdateWrapper<CallRecordEntity>()
+                        .eq(CallRecordEntity::getCallId, callId)
+                        .set(CallRecordEntity::getStatus, CallStatus.MISSED)
+                        .set(CallRecordEntity::getFailReason, "timeout")
+                        .set(CallRecordEntity::getEndedAt, now)), dbExecutor);
+        updateFuture.whenComplete((ok, error) -> callRegistry.clear(callId));
+
+        WsEnvelope out = new WsEnvelope();
+        out.setType("CALL_TIMEOUT");
+        out.setCallId(callId);
+        out.setCallReason("timeout");
+        out.setTs(Instant.now().toEpochMilli());
+        forwardToUser(session.getCallerUserId(), out);
+        forwardToUser(session.getCalleeUserId(), out);
+    }
+
+    private void forwardToUser(long userId, WsEnvelope env) {
+        List<Channel> channels = sessionRegistry.getChannels(userId);
+        if (channels == null || channels.isEmpty()) {
+            return;
+        }
+        for (Channel ch : channels) {
+            if (ch == null || !ch.isActive()) {
+                continue;
+            }
+            final Channel target = ch;
+            target.eventLoop().execute(() -> write(target, env));
+        }
+    }
+
+    private void persistCallFailed(long callId, long callerUserId, long calleeUserId, String failReason) {
+        LocalDateTime now = LocalDateTime.now();
+        CompletableFuture.runAsync(() -> {
+            CallRecordEntity record = new CallRecordEntity();
+            record.setCallId(callId);
+            record.setCallerUserId(callerUserId);
+            record.setCalleeUserId(calleeUserId);
+            record.setStatus(CallStatus.FAILED);
+            record.setFailReason(failReason);
+            record.setStartedAt(now);
+            record.setEndedAt(now);
+            callRecordService.save(record);
+        }, dbExecutor);
+    }
+
+    private static String safeCallReason(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isEmpty()) return null;
+        if (s.length() > 64) {
+            return s.substring(0, 64);
+        }
+        return s;
+    }
+
+    private boolean validateCallInvite(ChannelHandlerContext ctx, WsEnvelope msg) {
+        if (msg.getTo() == null) {
+            writeCallError(ctx, null, "missing_to", null, msg.getClientMsgId());
+            return false;
+        }
+        String kind = msg.getCallKind();
+        if (kind == null || kind.isBlank()) {
+            msg.setCallKind("video");
+        }
+        if (!"video".equalsIgnoreCase(msg.getCallKind())) {
+            writeCallError(ctx, null, "unsupported_call_kind", null, msg.getClientMsgId());
+            return false;
+        }
+        if (msg.getSdp() == null || msg.getSdp().isBlank()) {
+            writeCallError(ctx, null, "missing_sdp", null, msg.getClientMsgId());
+            return false;
+        }
+        if (msg.getSdp().length() > MAX_SDP_LEN) {
+            writeCallError(ctx, null, "sdp_too_long", null, msg.getClientMsgId());
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateCallAccept(ChannelHandlerContext ctx, WsEnvelope msg) {
+        if (!validateCallBasic(ctx, msg)) {
+            return false;
+        }
+        if (msg.getSdp() == null || msg.getSdp().isBlank()) {
+            writeCallError(ctx, msg.getCallId(), "missing_sdp", null, msg.getClientMsgId());
+            return false;
+        }
+        if (msg.getSdp().length() > MAX_SDP_LEN) {
+            writeCallError(ctx, msg.getCallId(), "sdp_too_long", null, msg.getClientMsgId());
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateCallIce(ChannelHandlerContext ctx, WsEnvelope msg) {
+        if (!validateCallBasic(ctx, msg)) {
+            return false;
+        }
+        if (msg.getIceCandidate() == null || msg.getIceCandidate().isBlank()) {
+            writeCallError(ctx, msg.getCallId(), "missing_ice_candidate", null, msg.getClientMsgId());
+            return false;
+        }
+        if (msg.getIceCandidate().length() > MAX_ICE_LEN) {
+            writeCallError(ctx, msg.getCallId(), "ice_candidate_too_long", null, msg.getClientMsgId());
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateCallBasic(ChannelHandlerContext ctx, WsEnvelope msg) {
+        if (msg.getCallId() == null || msg.getCallId() <= 0) {
+            writeCallError(ctx, null, "missing_call_id", null, msg.getClientMsgId());
+            return false;
+        }
+        return true;
+    }
+
+    private ChannelFuture writeCallError(ChannelHandlerContext ctx, Long callId, String reason, String callReason, String clientMsgId) {
+        WsEnvelope err = new WsEnvelope();
+        err.setType("CALL_ERROR");
+        err.setCallId(callId);
+        err.setClientMsgId(clientMsgId);
+        err.setReason(reason);
+        err.setCallReason(callReason);
+        err.setTs(Instant.now().toEpochMilli());
+        return write(ctx, err);
     }
 
     private static boolean isDeliveredAck(String ackType) {
@@ -1021,7 +1574,41 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
+        Long userId = ctx.channel().attr(SessionRegistry.ATTR_USER_ID).get();
+        if (userId != null) {
+            CallRegistry.CallSession session = callRegistry.clearByUser(userId);
+            if (session != null) {
+                long peer = session.peerOf(userId);
+                long callId = session.getCallId();
+                LocalDateTime now = LocalDateTime.now();
+                Integer durationSeconds = null;
+                if (session.getAcceptedAtMs() != null) {
+                    long d = Math.max(0, (Instant.now().toEpochMilli() - session.getAcceptedAtMs()) / 1000);
+                    durationSeconds = (int) Math.min(d, Integer.MAX_VALUE);
+                }
+                final Integer durationSecondsFinal = durationSeconds;
+                CompletableFuture.runAsync(() -> {
+                    LambdaUpdateWrapper<CallRecordEntity> w = new LambdaUpdateWrapper<CallRecordEntity>()
+                            .eq(CallRecordEntity::getCallId, callId)
+                            .set(CallRecordEntity::getStatus, CallStatus.FAILED)
+                            .set(CallRecordEntity::getFailReason, "peer_disconnect")
+                            .set(CallRecordEntity::getEndedAt, now);
+                    if (durationSecondsFinal != null) {
+                        w.set(CallRecordEntity::getDurationSeconds, durationSecondsFinal);
+                    }
+                    callRecordService.update(w);
+                }, dbExecutor);
 
+                WsEnvelope out = new WsEnvelope();
+                out.setType("CALL_END");
+                out.setFrom(userId);
+                out.setTo(peer);
+                out.setCallId(callId);
+                out.setCallReason("peer_disconnect");
+                out.setTs(Instant.now().toEpochMilli());
+                forwardToUser(peer, out);
+            }
+        }
         sessionRegistry.unbind(ctx.channel());
     }
     public void channelActive(ChannelHandlerContext ctx) {

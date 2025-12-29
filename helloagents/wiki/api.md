@@ -77,6 +77,15 @@
 实现位置：`com.miniim.domain.controller.UserController`
 、`com.miniim.domain.controller.MeController`
 
+### Call Record（通话记录）
+- `GET /call/record/cursor?limit=20&lastId=yyy`
+  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+- `GET /call/record/list?pageNo=1&pageSize=20`
+  - 语义：普通分页（返回 MyBatis-Plus `Page`）
+- 状态（以代码为准）：`ringing/accepted/rejected/canceled/ended/missed/failed`
+
+实现位置：`com.miniim.domain.controller.CallRecordController`
+
 ### Group（群）
 - `POST /group/create`
   - body：`{ "name": "xxx" }`（`memberUserIds` 已不支持：群成员通过“群码申请入群”加入）
@@ -177,6 +186,15 @@
 - `FRIEND_REQUEST`：发起好友申请（先落库，必要时 best-effort 推送给对方）。
 - `GROUP_JOIN_REQUEST`：有人申请入群（服务端推送给群主/管理员，best-effort）。
 - `GROUP_JOIN_DECISION`：入群申请处理结果（服务端推送给申请者，best-effort）。
+- `CALL_INVITE`：单聊视频通话邀请（WebRTC offer）。
+- `CALL_INVITE_OK`：邀请成功（服务端为本次通话分配 `callId`）。
+- `CALL_ACCEPT`：接听（WebRTC answer）。
+- `CALL_REJECT`：拒绝来电。
+- `CALL_CANCEL`：主叫取消呼叫（未接听前）。
+- `CALL_END`：挂断（通话中或异常结束）。
+- `CALL_TIMEOUT`：超时未接听。
+- `CALL_ICE`：WebRTC ICE candidate 交换。
+- `CALL_ERROR`：通话相关错误回包。
 - `ACK`：业务回执（用于幂等确认/接收确认）。
 - `ERROR`：错误回包。
 
@@ -291,3 +309,66 @@
 ### ⚠️ 当前实现备注（以代码为准）
 - 定时补发当前扫描 `status=SAVED` 且 `updatedAt` 超时的消息；投递失败（对端不在线）时会把消息置为 `DROPPED`。
 - `ACK_RECEIVED` 的数据库更新逻辑依赖 `clientMsgId/serverMsgId/from/to` 多条件；如客户端字段缺失可能导致 0 行更新（建议长期演进为“以 `serverMsgId` 为主键定位 + to_user_id 校验”）。
+
+---
+
+## WebRTC 单聊视频通话（Phase1，WS 信令）
+
+说明：该功能基于 WebRTC（浏览器）实现，服务端仅负责信令转发与通话记录落库。当前仅保证“同一台电脑、同一浏览器两个窗口”联调场景；无 TURN 时部分网络可能无法互通属于已知限制。
+
+### CALL_INVITE（主叫 → 服务端）
+- 必填字段：
+  - `type="CALL_INVITE"`
+  - `clientMsgId`
+  - `to`：被叫 userId
+  - `callKind="video"`
+  - `sdp`：offer.sdp
+
+### CALL_INVITE_OK（服务端 → 主叫）
+- 字段：
+  - `type="CALL_INVITE_OK"`
+  - `clientMsgId`：原样回传
+  - `callId`：服务端生成
+  - `to`
+
+### CALL_INVITE（服务端 → 被叫）
+- 字段：
+  - `type="CALL_INVITE"`
+  - `callId`
+  - `from`（主叫 userId）
+  - `to`（被叫 userId）
+  - `callKind="video"`
+  - `sdp`：offer.sdp
+
+### CALL_ACCEPT（被叫 → 服务端 → 主叫）
+- 必填字段：
+  - `type="CALL_ACCEPT"`
+  - `callId`
+  - `sdp`：answer.sdp
+
+### CALL_REJECT / CALL_CANCEL / CALL_END
+- 必填字段：
+  - `callId`
+- 可选字段：
+  - `callReason`：原因（展示/记录用途）
+
+### CALL_TIMEOUT（服务端 → 双方）
+- 字段：
+  - `type="CALL_TIMEOUT"`
+  - `callId`
+  - `callReason="timeout"`
+
+### CALL_ICE（双方互发，经服务端转发）
+- 必填字段：
+  - `type="CALL_ICE"`
+  - `callId`
+  - `iceCandidate`
+- 可选字段：
+  - `iceSdpMid`
+  - `iceSdpMLineIndex`
+
+### CALL_ERROR（服务端 → 客户端）
+- 字段：
+  - `type="CALL_ERROR"`
+  - `reason`：错误码（例如 `busy/callee_offline/not_friend/...`）
+  - `callReason`：可选展示文本（如 `busy/offline/timeout`）

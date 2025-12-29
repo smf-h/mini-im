@@ -2,12 +2,13 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
-import type { MessageEntity, SingleChatMemberStateDto } from '../types/api'
+import type { CallRecordDto, MessageEntity, SingleChatMemberStateDto } from '../types/api'
 import type { WsEnvelope } from '../types/ws'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
 import { useDndStore } from '../stores/dnd'
+import { useCallStore } from '../stores/call'
 import { formatTime } from '../utils/format'
 import UiAvatar from '../components/UiAvatar.vue'
 
@@ -27,6 +28,7 @@ const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
 const dnd = useDndStore()
+const call = useCallStore()
 
 const peerUserId = computed(() => String(route.params.peerUserId ?? ''))
 const peerName = computed(() => users.displayName(peerUserId.value))
@@ -42,6 +44,11 @@ const errorMsg = ref<string | null>(null)
 const wsCursor = ref(0)
 const chatEl = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
+
+const showCallHistory = ref(false)
+const callLoading = ref(false)
+const callError = ref<string | null>(null)
+const callRecords = ref<CallRecordDto[]>([])
 
 let peerReadUpTo: bigint = 0n
 let lastSentReadAck: bigint = 0n
@@ -144,6 +151,75 @@ async function toggleDmMute() {
   } catch (e) {
     errorMsg.value = `设置免打扰失败: ${String(e)}`
   }
+}
+
+async function startVideoCall() {
+  if (!peerUserId.value) return
+  if (call.busy) {
+    errorMsg.value = '当前已有进行中的通话'
+    return
+  }
+  try {
+    await call.startVideoCall(peerUserId.value)
+  } catch (e) {
+    errorMsg.value = `发起通话失败: ${String(e)}`
+  }
+}
+
+function callStatusText(s: CallRecordDto['status']) {
+  switch (s) {
+    case 'RINGING':
+      return '响铃中'
+    case 'ACCEPTED':
+      return '已接听'
+    case 'REJECTED':
+      return '已拒绝'
+    case 'CANCELED':
+      return '已取消'
+    case 'ENDED':
+      return '已结束'
+    case 'MISSED':
+      return '未接听'
+    case 'FAILED':
+      return '失败'
+    default:
+      return String(s)
+  }
+}
+
+function callDirectionText(d: CallRecordDto['direction']) {
+  return d === 'OUT' ? '呼出' : '呼入'
+}
+
+function durationText(sec?: number | null) {
+  if (sec == null) return ''
+  const s = Math.max(0, Math.floor(sec))
+  const mm = Math.floor(s / 60)
+  const ss = s % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${mm}:${pad(ss)}`
+}
+
+async function loadCallRecords() {
+  if (!peerUserId.value) return
+  if (!auth.userId) return
+  callLoading.value = true
+  callError.value = null
+  try {
+    const qs = new URLSearchParams()
+    qs.set('limit', '50')
+    const data = await apiGet<CallRecordDto[]>(`/call/record/cursor?${qs.toString()}`)
+    callRecords.value = (data ?? []).filter((r) => String(r.peerUserId ?? '') === peerUserId.value)
+  } catch (e) {
+    callError.value = String(e)
+  } finally {
+    callLoading.value = false
+  }
+}
+
+async function openCallHistory() {
+  showCallHistory.value = true
+  await loadCallRecords()
 }
 
 function resetAndLoad() {
@@ -377,6 +453,7 @@ onMounted(() => {
   void users.ensureBasics([peerUserId.value])
   void dnd.hydrate()
   void refreshMemberState()
+  void loadCallRecords()
   window.addEventListener('focus', onFocus)
   document.addEventListener('visibilitychange', onVisibilityChange)
 })
@@ -385,6 +462,16 @@ onUnmounted(() => {
   window.removeEventListener('focus', onFocus)
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
+
+watch(
+  () => call.phase,
+  () => {
+    if (!peerUserId.value) return
+    if (String(call.peerUserId ?? '') !== peerUserId.value) return
+    if (call.phase !== 'ended') return
+    window.setTimeout(() => void loadCallRecords(), 800)
+  },
+)
 </script>
 
 <template>
@@ -395,6 +482,8 @@ onUnmounted(() => {
         <div class="sub muted">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
       </div>
       <div class="row">
+        <button class="btn" :disabled="call.busy" @click="startVideoCall">视频通话</button>
+        <button class="btn" @click="openCallHistory">通话记录</button>
         <button class="btn" @click="toggleDmMute">{{ dmMuted ? '已免打扰' : '免打扰' }}</button>
         <button class="btn" @click="openUser(peerUserId)">对方主页</button>
         <button class="btn" @click="resetAndLoad">刷新</button>
@@ -438,6 +527,46 @@ onUnmounted(() => {
     </footer>
 
     <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
+
+    <div v-if="showCallHistory" class="modalMask" @click.self="showCallHistory = false">
+      <div class="modalCard" role="dialog" aria-modal="true" aria-label="通话记录">
+        <div class="modalTop">
+          <div>
+            <div class="modalTitle">通话记录</div>
+            <div class="muted" style="font-size: 12px; margin-top: 4px">仅展示与当前好友的最近记录。</div>
+          </div>
+          <button class="x" type="button" aria-label="关闭" @click="showCallHistory = false">×</button>
+        </div>
+
+        <div class="modalBody">
+          <div v-if="callLoading" class="tail muted">加载中…</div>
+          <div v-else-if="callError" class="tail error">{{ callError }}</div>
+          <div v-else-if="callRecords.length === 0" class="tail muted">暂无通话记录</div>
+
+          <div v-else class="callList">
+            <div v-for="r in callRecords" :key="r.id" class="callRow">
+              <div class="callLeft">
+                <div class="callMain">
+                  <span class="pill">{{ callDirectionText(r.direction) }}</span>
+                  <span class="callStatus">{{ callStatusText(r.status) }}</span>
+                  <span v-if="r.durationSeconds != null" class="muted">时长 {{ durationText(r.durationSeconds) }}</span>
+                </div>
+                <div class="callSub muted">
+                  <span v-if="r.startedAt">{{ formatTime(r.startedAt) }}</span>
+                  <span v-if="r.failReason"> · {{ r.failReason }}</span>
+                </div>
+              </div>
+              <div class="callRight muted">callId={{ r.callId }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modalActions">
+          <button class="btn" type="button" @click="loadCallRecords">刷新</button>
+          <button class="btn primary" type="button" @click="showCallHistory = false">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -573,6 +702,118 @@ onUnmounted(() => {
   padding: 12px 16px;
   background: var(--surface);
   border-top: 1px solid var(--divider);
+}
+.modalMask {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(15, 23, 42, 0.35);
+  display: grid;
+  place-items: center;
+}
+.modalCard {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 40px));
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modalTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.modalTitle {
+  font-weight: 900;
+  font-size: 16px;
+}
+.x {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 30px;
+  color: rgba(15, 23, 42, 0.68);
+}
+.x:hover {
+  background: #ffffff;
+}
+.modalBody {
+  flex: 1;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.86);
+}
+.tail {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.62);
+}
+.tail.error {
+  color: var(--danger);
+}
+.callList {
+  display: flex;
+  flex-direction: column;
+}
+.callRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.callMain {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  background: rgba(7, 193, 96, 0.12);
+  color: rgba(7, 193, 96, 0.95);
+  border: 1px solid rgba(7, 193, 96, 0.18);
+}
+.callStatus {
+  font-weight: 850;
+  color: rgba(15, 23, 42, 0.9);
+  font-size: 13px;
+}
+.callSub {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.callRight {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+  white-space: nowrap;
+}
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modalActions .btn.primary {
+  border-color: rgba(7, 193, 96, 0.35);
+  background: rgba(7, 193, 96, 0.16);
+  color: rgba(7, 193, 96, 0.95);
 }
 .error {
   padding: 10px 16px;

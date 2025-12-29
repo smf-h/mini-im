@@ -7,9 +7,11 @@ import { useUserStore } from '../stores/users'
 import { useGroupStore } from '../stores/groups'
 import { useNotifyStore } from '../stores/notify'
 import { useDndStore } from '../stores/dnd'
+import { useCallStore } from '../stores/call'
 import type { WsEnvelope } from '../types/ws'
 import UiAvatar from './UiAvatar.vue'
 import UiToastContainer from './UiToastContainer.vue'
+import CallOverlay from './CallOverlay.vue'
 
 const auth = useAuthStore()
 const ws = useWsStore()
@@ -17,6 +19,7 @@ const users = useUserStore()
 const groups = useGroupStore()
 const notify = useNotifyStore()
 const dnd = useDndStore()
+const call = useCallStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -78,6 +81,11 @@ function formatToastSnippet(body: unknown) {
 
 async function handleWsEvent(ev: WsEnvelope) {
   if (!auth.userId) return
+
+  if (ev.type?.startsWith('CALL_')) {
+    await call.handleWsEvent(ev)
+    return
+  }
 
   if (ev.type === 'SINGLE_CHAT') {
     if (!ev.from || !ev.to) return
@@ -338,6 +346,7 @@ onUnmounted(() => {
       <main class="mainStage">
         <slot />
       </main>
+      <CallOverlay />
       <UiToastContainer />
     </div>
   </div>

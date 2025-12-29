@@ -22,6 +22,7 @@
 - 全局操作菜单：`frontend/src/components/GlobalActionMenu.vue`（+ 菜单）
 - 发起单聊弹窗：`frontend/src/components/StartChatModal.vue`
 - Toast 容器：`frontend/src/components/UiToastContainer.vue`（TransitionGroup 动画 + 左侧色条 + 关闭按钮）
+- 单聊视频通话（WebRTC，Phase1）：`frontend/src/stores/call.ts` + `frontend/src/components/CallOverlay.vue`（全局来电/通话面板）
 - 单聊 UI：`frontend/src/views/ChatView.vue`
 - 会话模块（双栏）：`frontend/src/views/ChatsView.vue`（左：最近会话；右：聊天窗口/空状态）
 - 通讯录模块（双栏）：`frontend/src/views/ContactsView.vue`（左：导航+好友；右：新的朋友/群组/个人页）
@@ -51,6 +52,8 @@
 - 气泡大小随内容变化，并限制最大宽度
 - 自己消息靠右、对方消息靠左
 - 新消息到达/发送后自动滚动到底部；当用户上滑查看历史时不强制抢占滚动位置
+- 通话入口：单聊页提供“视频通话”；通话面板为全局覆盖层（任意页面可接听/挂断）
+- 通话记录：单聊页提供“通话记录”弹窗（基于 `/call/record/cursor`，前端按 peer 过滤展示）
 
 ## 会话列表约定（仿微信交互）
 - 列表展示对方“昵称优先，其次 username，再次 id”

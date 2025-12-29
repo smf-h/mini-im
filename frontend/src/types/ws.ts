@@ -12,6 +12,13 @@ export type WsEnvelope = {
   mentions?: string[] | null
   replyToServerMsgId?: string | null
   important?: boolean | null
+  callId?: string | null
+  callKind?: string | null
+  sdp?: string | null
+  iceCandidate?: string | null
+  iceSdpMid?: string | null
+  iceSdpMLineIndex?: number | null
+  callReason?: string | null
   ts?: number | null
   reason?: string | null
 }

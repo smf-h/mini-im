@@ -30,6 +30,7 @@
 | 202512282014 | 前端视觉系统 + 核心页通栏重构 | 功能 | ✅已完成 | helloagents/history/2025-12/202512282014_wechat_ui_design_system/ |
 | 202512282100 | 申请入群(审批) + 个人主页 + FriendCode/GroupCode | 功能 | ✅已完成 | helloagents/history/2025-12/202512282100_group_join_friendcode_profile/ |
 | 202512291142 | 会话免打扰（DND） | 功能 | ✅已完成 | helloagents/history/2025-12/202512291142_dnd/ |
+| 202512291645 | 单聊视频通话（WebRTC） | 功能 | ✅已完成 | helloagents/history/2025-12/202512291645_webrtc_call/ |
 
 ---
 
@@ -37,6 +38,7 @@
 
 ### 2025-12
 
+- 202512291645_webrtc_call - 单聊视频通话（WebRTC）
 - 202512291142_dnd - 会话免打扰（DND）
 - 202512282014_wechat_ui_design_system - 前端微信绿白视觉系统 + 组件化重构
 - 202512282100_group_join_friendcode_profile - 申请入群(审批) + 个人主页 + FriendCode/GroupCode

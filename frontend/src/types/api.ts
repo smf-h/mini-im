@@ -189,3 +189,18 @@ export type MessageEntity = {
   createdAt: string
   updatedAt: string
 }
+
+export type CallStatus = 'RINGING' | 'ACCEPTED' | 'REJECTED' | 'CANCELED' | 'ENDED' | 'MISSED' | 'FAILED'
+
+export type CallRecordDto = {
+  id: Id
+  callId: Id
+  peerUserId: Id | null
+  direction: 'IN' | 'OUT'
+  status: CallStatus
+  failReason?: string | null
+  startedAt?: string | null
+  acceptedAt?: string | null
+  endedAt?: string | null
+  durationSeconds?: number | null
+}
