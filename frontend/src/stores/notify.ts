@@ -8,6 +8,8 @@ export type Toast = {
   kind: ToastKind
   title: string
   text: string
+  avatarText?: string
+  avatarSeed?: string
   path?: string
   createdAt: number
 }
@@ -17,6 +19,8 @@ export type ToastPushPayload = {
   kind?: ToastKind
   title: string
   text: string
+  avatarText?: string
+  avatarSeed?: string
   path?: string
 }
 
@@ -50,6 +54,8 @@ export const useNotifyStore = defineStore('notify', () => {
       kind: payload.kind ?? 'info',
       title: payload.title,
       text: payload.text,
+      avatarText: payload.avatarText,
+      avatarSeed: payload.avatarSeed,
       path: payload.path,
       createdAt: Date.now(),
     })

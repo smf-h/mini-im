@@ -35,6 +35,14 @@ export type FriendRequestEntity = {
   updatedAt: string
 }
 
+export type FriendRelationEntity = {
+  id: Id
+  user1Id: Id
+  user2Id: Id
+  createdAt: string
+  updatedAt: string
+}
+
 export type SingleChatConversationDto = {
   singleChatId: Id
   peerUserId: Id
@@ -85,6 +93,11 @@ export type CreateGroupResponse = {
 export type CreateFriendRequestByCodeResponse = {
   requestId: Id
   toUserId: Id
+}
+
+export type DndListResponse = {
+  dmPeerUserIds: Id[]
+  groupIds: Id[]
 }
 
 export type UserProfileDto = {

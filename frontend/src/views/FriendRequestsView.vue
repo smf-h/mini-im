@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../services/api'
-import type { CreateFriendRequestByCodeResponse, FriendRequestEntity } from '../types/api'
+import type { FriendRequestEntity } from '../types/api'
 import type { WsEnvelope } from '../types/ws'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
@@ -25,9 +25,6 @@ const loading = ref(false)
 const done = ref(false)
 const errorMsg = ref<string | null>(null)
 
-const toFriendCode = ref('')
-const content = ref('你好，我想加你好友')
-const sendStatus = ref<string | null>(null)
 const wsCursor = ref(0)
 
 const boxOptions = [
@@ -76,32 +73,13 @@ function onScroll(e: Event) {
   }
 }
 
-async function sendFriendRequest() {
-  sendStatus.value = null
-  try {
-    const code = toFriendCode.value.trim().toUpperCase()
-    if (!/^[A-Z0-9]{6,16}$/.test(code)) {
-      sendStatus.value = 'FriendCode 无效'
-      return
-    }
-    sendStatus.value = '发送中…'
-    await apiPost<CreateFriendRequestByCodeResponse>(`/friend/request/by-code`, {
-      toFriendCode: code,
-      message: content.value,
-    })
-    sendStatus.value = '已发送'
-  } catch (e) {
-    sendStatus.value = `发送失败: ${String(e)}`
-  }
-}
-
 async function decide(requestId: string, action: 'accept' | 'reject') {
   errorMsg.value = null
   try {
     const resp = await apiPost<{ singleChatId: string | null }>(`/friend/request/decide`, { requestId, action })
     const req = items.value.find((x) => x.id === requestId)
     if (action === 'accept' && req) {
-      await router.push(`/chat/${req.fromUserId}`)
+      await router.push(`/chats/dm/${req.fromUserId}`)
       return resp
     }
     resetAndLoad()
@@ -122,6 +100,18 @@ function applyWsEvent(ev: WsEnvelope) {
 function displayUser(id: string) {
   if (id === auth.userId) return '我'
   return users.displayName(id)
+}
+
+function primaryUserId(r: FriendRequestEntity) {
+  if (box.value === 'inbox') return r.fromUserId
+  if (box.value === 'outbox') return r.toUserId
+  return r.fromUserId
+}
+
+function titleText(r: FriendRequestEntity) {
+  if (box.value === 'inbox') return displayUser(r.fromUserId)
+  if (box.value === 'outbox') return `发给 ${displayUser(r.toUserId)}`
+  return `${displayUser(r.fromUserId)} → ${displayUser(r.toUserId)}`
 }
 
 watch(
@@ -157,38 +147,31 @@ onMounted(() => {
 
     <div class="sub row" style="justify-content: space-between">
       <UiSegmented v-model="box" :options="boxOptions" />
-      <div class="muted" style="font-size: 12px">inbox/outbox/all</div>
-    </div>
-
-    <div class="composer">
-      <div class="row" style="gap: 10px; align-items: stretch">
-        <input v-model="toFriendCode" class="input" placeholder="对方 FriendCode" style="max-width: 180px" />
-        <input v-model="content" class="input" placeholder="验证消息(<=256)" />
-        <button class="btn primary" @click="sendFriendRequest">发送</button>
-      </div>
-      <div v-if="sendStatus" class="muted" style="margin-top: 8px">{{ sendStatus }}</div>
+      <div class="muted" style="font-size: 12px">添加好友请点左侧通讯录的 +</div>
     </div>
 
     <div class="list" @scroll="onScroll">
       <UiListItem v-for="r in items" :key="r.id">
         <template #left>
-          <button class="avatarBtn" type="button" @click="router.push(`/u/${r.fromUserId}`)">
-            <UiAvatar :text="displayUser(r.fromUserId)" :seed="r.fromUserId" :size="42" />
+          <button class="avatarBtn" type="button" @click="router.push(`/contacts/u/${primaryUserId(r)}`)">
+            <UiAvatar :text="displayUser(primaryUserId(r))" :seed="primaryUserId(r)" :size="40" />
           </button>
         </template>
         <div class="main">
           <div class="titleRow">
-            <div class="name">{{ displayUser(r.fromUserId) }} → {{ displayUser(r.toUserId) }}</div>
+            <div class="name">{{ titleText(r) }}</div>
             <div class="time">{{ formatTime(r.createdAt) }}</div>
           </div>
           <div class="preview">{{ r.content ?? '' }}</div>
         </div>
         <template #right>
           <div class="rightCol">
-            <div class="statusTag" :data-status="r.status">{{ r.status }}</div>
-            <div v-if="box === 'inbox' && r.status === 'PENDING'" class="actions">
-              <button class="textBtn reject" @click.stop="decide(r.id, 'reject')">拒绝</button>
-              <button class="textBtn accept" @click.stop="decide(r.id, 'accept')">同意</button>
+            <template v-if="box === 'inbox' && r.status === 'PENDING'">
+              <button class="btnSmall" @click.stop="decide(r.id, 'reject')">拒绝</button>
+              <button class="btnSmall primary" @click.stop="decide(r.id, 'accept')">同意</button>
+            </template>
+            <div v-else class="statusText">
+              {{ r.status === 'ACCEPTED' ? '已添加' : r.status === 'REJECTED' ? '已拒绝' : r.status }}
             </div>
           </div>
         </template>
@@ -207,28 +190,23 @@ onMounted(() => {
 
 <style scoped>
 .page {
-  border-radius: var(--radius-card);
-  background: var(--surface);
-  border: 1px solid var(--divider);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-main, var(--bg));
 }
 .header {
-  padding: 14px 14px 10px;
+  padding: 14px 16px 10px;
 }
 .sub {
-  padding: 0 14px 10px;
-}
-.composer {
-  padding: 12px 14px;
-  border-top: 1px solid var(--divider);
-  border-bottom: 1px solid var(--divider);
-  background: rgba(0, 0, 0, 0.015);
+  padding: 0 16px 10px;
 }
 .list {
-  height: calc(100vh - 290px);
+  flex: 1;
   overflow: auto;
   padding: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--divider);
 }
 .main {
   min-width: 0;
@@ -253,49 +231,46 @@ onMounted(() => {
   color: var(--text-3);
 }
 .preview {
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   color: var(--text-2);
 }
 .rightCol {
-  display: grid;
-  gap: 8px;
-  justify-items: end;
-}
-.statusTag {
-  font-size: 12px;
-  color: var(--text-3);
-}
-.statusTag[data-status='PENDING'] {
-  color: rgba(59, 130, 246, 0.9);
-}
-.statusTag[data-status='ACCEPTED'] {
-  color: rgba(7, 193, 96, 0.95);
-}
-.statusTag[data-status='REJECTED'] {
-  color: rgba(17, 17, 17, 0.46);
-}
-.actions {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
-.textBtn {
-  border: 0;
-  background: transparent;
-  padding: 0;
+.statusText {
+  font-size: 12px;
+  color: rgba(17, 17, 17, 0.42);
+  white-space: nowrap;
+}
+.btnSmall {
+  border: 1px solid rgba(17, 17, 17, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0 10px;
+  height: 28px;
+  border-radius: 999px;
   cursor: pointer;
   font-size: 13px;
+  color: rgba(17, 17, 17, 0.78);
 }
-.textBtn.accept {
-  color: var(--primary);
-  font-weight: 700;
+.btnSmall.primary {
+  border-color: rgba(7, 193, 96, 0.32);
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 800;
 }
-.textBtn.reject {
-  color: rgba(17, 17, 17, 0.55);
+.btnSmall:hover {
+  background: rgba(0, 0, 0, 0.03);
 }
-.textBtn:active {
+.btnSmall.primary:hover {
+  background: var(--primary-hover, #06ad56);
+}
+.btnSmall:active {
   transform: scale(0.99);
 }
 .avatarBtn {

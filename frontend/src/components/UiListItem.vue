@@ -43,6 +43,12 @@ const tag = computed(() => (props.to ? RouterLink : 'div'))
 .uiListItem:hover {
   background: #f9f9f9;
 }
+.uiListItem.router-link-active {
+  background: rgba(7, 193, 96, 0.08);
+}
+.uiListItem.router-link-active:hover {
+  background: rgba(7, 193, 96, 0.1);
+}
 .left,
 .right {
   display: flex;
@@ -53,4 +59,3 @@ const tag = computed(() => (props.to ? RouterLink : 'div'))
   min-width: 0;
 }
 </style>
-

@@ -2,12 +2,13 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
-import type { MessageEntity } from '../types/api'
+import type { GroupMemberDto, MessageEntity } from '../types/api'
 import { formatTime } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
 import { useGroupStore } from '../stores/groups'
+import { useDndStore } from '../stores/dnd'
 import type { WsEnvelope } from '../types/ws'
 import UiAvatar from '../components/UiAvatar.vue'
 
@@ -27,9 +28,11 @@ const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
 const groups = useGroupStore()
+const dnd = useDndStore()
 
 const groupId = computed(() => String(route.params.groupId ?? ''))
 const groupName = computed(() => groups.displayName(groupId.value))
+const groupMuted = computed(() => dnd.isGroupMuted(groupId.value))
 
 const items = ref<UiMessage[]>([])
 const loading = ref(false)
@@ -39,6 +42,7 @@ const lastId = ref<string | null>(null)
 const wsCursor = ref(0)
 
 const draft = ref('')
+const draftEl = ref<HTMLInputElement | null>(null)
 const replyTo = ref<UiMessage | null>(null)
 const replyPreview = computed(() => {
   const m = replyTo.value
@@ -52,6 +56,16 @@ const chatEl = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 
 let lastSentReadAck: bigint = 0n
+
+const members = ref<GroupMemberDto[]>([])
+const membersLoaded = ref(false)
+
+const mentionOpen = ref(false)
+const mentionStart = ref<number | null>(null)
+const mentionQuery = ref('')
+const mentionActiveIndex = ref(0)
+const mentionPicked = ref<Record<string, true>>({})
+const mentionWrapEl = ref<HTMLElement | null>(null)
 
 function uuid() {
   return crypto.randomUUID()
@@ -208,15 +222,179 @@ function onScroll(e: Event) {
   }
 }
 
+function memberDisplayName(userId: string) {
+  const id = String(userId)
+  const cached = users.displayName(id)
+  if (cached && cached !== id) return cached
+  const m = members.value.find((x) => x.userId === id)
+  if (!m) return cached || id
+  const nick = (m.nickname ?? '').trim()
+  if (nick) return nick
+  const uname = (m.username ?? '').trim()
+  if (uname) return uname
+  return cached || id
+}
+
+async function loadMembers() {
+  if (!groupId.value) return
+  membersLoaded.value = false
+  members.value = []
+  try {
+    const list = await apiGet<GroupMemberDto[]>(`/group/member/list?groupId=${encodeURIComponent(groupId.value)}`)
+    members.value = list ?? []
+    membersLoaded.value = true
+    void users.ensureBasics(members.value.map((m) => m.userId))
+  } catch {
+    membersLoaded.value = false
+  }
+}
+
+const mentionCandidates = computed(() => {
+  const q = mentionQuery.value.trim().toLowerCase()
+  const list = members.value.filter((m) => m.userId !== auth.userId)
+  if (!q) return list.slice(0, 30)
+  return list
+    .filter((m) => {
+      const id = String(m.userId).toLowerCase()
+      const name = memberDisplayName(m.userId).toLowerCase()
+      return id.startsWith(q) || name.includes(q)
+    })
+    .slice(0, 30)
+})
+
+function closeMention() {
+  mentionOpen.value = false
+  mentionStart.value = null
+  mentionQuery.value = ''
+  mentionActiveIndex.value = 0
+}
+
+function updateMentionContext() {
+  const el = draftEl.value
+  if (!el) {
+    closeMention()
+    return
+  }
+
+  const caret = el.selectionStart ?? draft.value.length
+  const text = draft.value
+
+  const before = text.slice(0, caret)
+  const at = before.lastIndexOf('@')
+  if (at < 0) {
+    closeMention()
+    return
+  }
+
+  const prev = at === 0 ? ' ' : before[at - 1]!
+  if (prev.trim() !== '') {
+    closeMention()
+    return
+  }
+
+  const tail = before.slice(at + 1)
+  if (/\s/.test(tail)) {
+    closeMention()
+    return
+  }
+
+  mentionStart.value = at
+  mentionQuery.value = tail
+  mentionOpen.value = true
+  mentionActiveIndex.value = 0
+}
+
+function pickMention(m: GroupMemberDto) {
+  const el = draftEl.value
+  if (!el) return
+  const start = mentionStart.value
+  if (start == null) return
+
+  const caret = el.selectionStart ?? draft.value.length
+  const name = memberDisplayName(m.userId)
+  const insert = `@${name} `
+
+  const left = draft.value.slice(0, start)
+  const right = draft.value.slice(caret)
+  draft.value = `${left}${insert}${right}`
+  mentionPicked.value[String(m.userId)] = true
+
+  void nextTick(() => {
+    const nextCaret = left.length + insert.length
+    el.focus()
+    el.setSelectionRange(nextCaret, nextCaret)
+    closeMention()
+  })
+}
+
+function onDraftInput() {
+  updateMentionContext()
+}
+
+function onDraftKeyDown(e: KeyboardEvent) {
+  if (mentionOpen.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      const max = mentionCandidates.value.length
+      if (!max) return
+      mentionActiveIndex.value = (mentionActiveIndex.value + 1) % max
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      const max = mentionCandidates.value.length
+      if (!max) return
+      mentionActiveIndex.value = (mentionActiveIndex.value - 1 + max) % max
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const picked = mentionCandidates.value[mentionActiveIndex.value]
+      if (picked) pickMention(picked)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMention()
+      return
+    }
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    void send()
+  }
+}
+
+function onMentionPointerDown(e: PointerEvent) {
+  if (!mentionOpen.value) return
+  const el = mentionWrapEl.value
+  if (!el) return
+  if (e.target instanceof Node && el.contains(e.target)) return
+  closeMention()
+}
+
 function parseMentions(text: string) {
-  const out: string[] = []
+  const out = new Set<string>()
+
+  // 兼容：手动输入 @123
   const re = /@([1-9][0-9]*)/g
   for (;;) {
     const m = re.exec(text)
     if (!m) break
-    out.push(m[1]!)
+    out.add(m[1]!)
   }
-  return Array.from(new Set(out))
+
+  // 新增：通过成员选择器插入的 @昵称
+  for (const uid of Object.keys(mentionPicked.value)) {
+    const name = memberDisplayName(uid)
+    if (!name) continue
+    if (text.includes(`@${name}`)) {
+      out.add(uid)
+    }
+  }
+
+  return Array.from(out)
 }
 
 function startReply(m: UiMessage) {
@@ -229,7 +407,16 @@ function cancelReply() {
 }
 
 function openUser(id: string) {
-  void router.push(`/u/${id}`)
+  void router.push(`/contacts/u/${id}`)
+}
+
+async function toggleGroupMute() {
+  if (!groupId.value) return
+  try {
+    await dnd.toggleGroup(groupId.value)
+  } catch (e) {
+    errorMsg.value = `设置免打扰失败: ${String(e)}`
+  }
 }
 
 async function send() {
@@ -253,6 +440,8 @@ async function send() {
   void nextTick(() => scrollToBottom())
 
   const mentions = parseMentions(content)
+  mentionPicked.value = {}
+  closeMention()
 
   try {
     await ws.connect()
@@ -351,28 +540,44 @@ onMounted(() => {
   void loadMore()
   void nextTick(() => scrollToBottom())
   void groups.ensureBasics([groupId.value])
+  void dnd.hydrate()
+  void loadMembers()
   window.addEventListener('focus', onFocus)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('pointerdown', onMentionPointerDown, true)
 })
 
 onUnmounted(() => {
   window.removeEventListener('focus', onFocus)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('pointerdown', onMentionPointerDown, true)
 })
+
+watch(
+  () => groupId.value,
+  () => {
+    mentionPicked.value = {}
+    closeMention()
+    void loadMembers()
+  },
+)
 </script>
 
 <template>
-  <div class="card" style="padding: 14px">
-    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
-      <h2 style="margin: 0">群聊 {{ groupName }}</h2>
+  <div class="chatStage">
+    <header class="chatHeader">
+      <div class="headerMain">
+        <div class="title">{{ groupName || `群聊 ${groupId}` }}</div>
+        <div class="sub muted">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
+      </div>
       <div class="row">
-        <button class="btn" @click="router.push(`/group/${groupId}/profile`)">群资料</button>
+        <button class="btn" @click="toggleGroupMute">{{ groupMuted ? '已免打扰' : '免打扰' }}</button>
+        <button class="btn" @click="router.push(`/chats/group/${groupId}/profile`)">群资料</button>
         <button class="btn" @click="resetAndLoad">刷新</button>
       </div>
-    </div>
-    <div class="muted" style="margin-bottom: 10px">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
+    </header>
 
-    <div ref="chatEl" class="chat" @scroll="onScroll">
+    <div ref="chatEl" class="chatBody" @scroll="onScroll">
       <div v-if="loading" class="muted" style="text-align: center; padding: 8px">加载中…</div>
       <div v-if="done && !loading" class="muted" style="text-align: center; padding: 8px">没有更多历史</div>
 
@@ -410,25 +615,85 @@ onUnmounted(() => {
       <button class="miniBtn" @click="cancelReply">取消</button>
     </div>
 
-    <div class="row" style="margin-top: 12px">
-      <input v-model="draft" class="input" placeholder="输入消息…（@123 或回复 可触发重要提醒）" @keydown.enter="send" />
+    <footer class="chatFooter">
+      <div ref="mentionWrapEl" class="draftWrap">
+        <div v-if="mentionOpen" class="mentionMenu" role="listbox" aria-label="选择群成员">
+          <div v-if="!membersLoaded" class="mentionEmpty muted">加载成员中…</div>
+          <button
+            v-for="(m, idx) in mentionCandidates"
+            :key="m.userId"
+            class="mentionItem"
+            type="button"
+            :data-active="idx === mentionActiveIndex"
+            @click="pickMention(m)"
+          >
+            <UiAvatar :text="memberDisplayName(m.userId)" :seed="m.userId" :size="28" />
+            <div class="mentionMeta">
+              <div class="mentionName">{{ memberDisplayName(m.userId) }}</div>
+              <div class="mentionId muted">uid={{ m.userId }}</div>
+            </div>
+          </button>
+          <div v-if="membersLoaded && !mentionCandidates.length" class="mentionEmpty muted">没有匹配的成员</div>
+        </div>
+
+        <input
+          ref="draftEl"
+          v-model="draft"
+          class="input"
+          placeholder="输入消息…（输入 @ 可选群成员；也可手动 @123；回复可触发重要提醒）"
+          @input="onDraftInput"
+          @keydown="onDraftKeyDown"
+        />
+      </div>
       <button class="btn primary" @click="send">发送</button>
-    </div>
-    <div v-if="errorMsg" class="muted" style="color: var(--danger); margin-top: 10px">{{ errorMsg }}</div>
+    </footer>
+
+    <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
   </div>
 </template>
 
 <style scoped>
-.chat {
-  height: calc(100vh - 240px);
+.chatStage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.chatHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+}
+.headerMain {
+  min-width: 0;
+}
+.title {
+  font-weight: 900;
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub {
+  margin-top: 2px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatBody {
+  flex: 1;
   overflow: auto;
-  padding: 10px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-top: 1px solid rgba(0, 0, 0, 0.03);
 }
 .msgRow {
   display: flex;
@@ -492,7 +757,7 @@ onUnmounted(() => {
   background: rgba(15, 23, 42, 0.04);
 }
 .replyBar {
-  margin-top: 10px;
+  margin: 10px 16px 0;
   padding: 10px 12px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
@@ -518,5 +783,79 @@ onUnmounted(() => {
 }
 .avatarBtn.me {
   margin-left: 10px;
+}
+.chatFooter {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--divider);
+}
+.draftWrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.mentionMenu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.14);
+  padding: 6px;
+}
+.mentionItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.mentionItem:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.mentionItem[data-active='true'] {
+  background: rgba(7, 193, 96, 0.12);
+  border-color: rgba(7, 193, 96, 0.24);
+}
+.mentionMeta {
+  min-width: 0;
+}
+.mentionName {
+  font-weight: 850;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mentionId {
+  margin-top: 2px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mentionEmpty {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.error {
+  padding: 10px 16px;
+  color: var(--danger);
+  background: rgba(250, 81, 81, 0.06);
+  border-top: 1px solid rgba(250, 81, 81, 0.14);
+  font-size: 12px;
 }
 </style>

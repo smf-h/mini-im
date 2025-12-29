@@ -11,6 +11,9 @@
 - 分支保护: master 启用必需PR审核与状态检查
 - WS: 送达/已读/补发从 `t_message.status` 迁移为“成员游标”模型（`t_single_chat_member` / `t_group_member`），可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）
 - 前端：扩展微信绿白视觉变量（颜色/阴影/圆角/分割线），新增 `Avatar/Badge/ListItem/Segmented` 微组件，并重构登录/会话/好友申请页为更接近微信的通栏列表与交互
+- 前端：重构为桌面端 Sidebar Layout（Sidebar + 列表栏 + 主内容区），新增 `/chats`、`/contacts`、`/settings` 路由，并为旧路由提供重定向兼容
+- 前端：新增全局 `+` 操作菜单（发起单聊/创建群聊/加入群组/添加朋友），并进一步打磨好友申请列表、群资料页、红点未读徽标与 toast 动效
+- 前端：群聊输入框支持 `@` 选择群成员（插入 `@昵称` 并发送 `mentions` 列表以触发 important）
 
 ### 新增
 - 单聊（WS）：SAVED 落库确认、ACK_RECEIVED 接收确认、定时补发与离线标记（实现细节以代码为准）
@@ -19,6 +22,7 @@
 - 联调前端：将 `frontend/` 替换为 Vue3+TypeScript 站点（登录/会话/聊天/好友申请）
 - 前端：新增站内通知（收到 `SINGLE_CHAT` 时 toast 提醒，自动拉取发送方昵称/用户名；离线补发同样触发提醒）
 - 前端：站内通知（toast）升级为可点击卡片，并增加 `FRIEND_REQUEST` 提醒（跳转到好友申请页）
+- 会话免打扰（DND）：按会话开关屏蔽普通消息 toast（important/@我 不屏蔽），服务端持久化并在前端缓存（localStorage）用于跨端同步与兜底
 - 群聊（WS+HTTP）：新增小群创建、群会话/群消息 cursor；WS 支持 `GROUP_CHAT`（落库 ACK(saved) + 在线投递）
 - 群聊（重要消息）：新增 `t_message_mention` 稀疏索引表，仅对“@我/回复我”落库，用于离线补发与 `mentionUnreadCount`
 - 前端：新增群列表/群聊页；收到 `GROUP_CHAT` 且 `important=true` 时 toast 提醒（不在群页时）

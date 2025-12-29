@@ -250,6 +250,17 @@
   - 返回：`singleChatId`、`myLastReadMsgId`、`peerLastReadMsgId`
   - 用途：前端在单聊页面展示“已读/未读”，并可用于调试
 
+### 会话免打扰（DND）（HTTP）
+- `GET /dnd/list`
+  - 用途：拉取当前用户已开启免打扰的会话（用于跨端同步）
+  - 响应：`{ "dmPeerUserIds": ["10001","10002"], "groupIds": ["20001"] }`
+- `POST /dnd/dm/set`
+  - body：`{ "peerUserId": "10001", "muted": true }`
+  - 说明：仅修改“自己这一侧”的免打扰；不影响消息收发；不通知对方
+- `POST /dnd/group/set`
+  - body：`{ "groupId": "20001", "muted": true }`
+  - 说明：仅修改“自己这一侧”的免打扰；不影响消息收发；不通知对方；需要是群成员
+
 ## FRIEND_REQUEST（客户端 → 服务端）
 
 ### 请求（客户端 → 服务端）

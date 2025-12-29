@@ -16,7 +16,7 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(username.value.trim(), password.value)
-    await router.push('/conversations')
+    await router.push('/chats')
   } catch (e) {
     errorMsg.value = String(e)
   } finally {
@@ -65,7 +65,8 @@ async function submit() {
 
 <style scoped>
 .stage {
-  min-height: calc(100vh - 72px);
+  height: 100vh;
+  overflow: auto;
   display: grid;
   place-items: center;
   padding: 32px 16px 60px;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../services/api'
 import type { CreateGroupResponse, GroupConversationDto, GroupJoinRequestResponse } from '../types/api'
@@ -30,6 +30,9 @@ const createStatus = ref<string | null>(null)
 const joinGroupCode = ref('')
 const joinMessage = ref('你好，我想加入该群')
 const joinStatus = ref<string | null>(null)
+
+const createNameEl = ref<HTMLInputElement | null>(null)
+const joinCodeEl = ref<HTMLInputElement | null>(null)
 
 const cursor = computed(() => {
   const last = items.value.length ? items.value[items.value.length - 1] : undefined
@@ -131,7 +134,7 @@ async function createGroup() {
     createStatus.value = '创建成功'
     createName.value = ''
     resetAndLoad()
-    void router.push(`/group/${resp.groupId}`)
+    void router.push(`/chats/group/${resp.groupId}`)
   } catch (e) {
     createStatus.value = String(e)
   }
@@ -156,13 +159,35 @@ async function requestJoin() {
 function openGroupProfile(ev: MouseEvent, gid: string) {
   ev.preventDefault()
   ev.stopPropagation()
-  void router.push(`/group/${gid}/profile`)
+  void router.push(`/chats/group/${gid}/profile`)
 }
 
 onMounted(() => {
   wsCursor.value = ws.events.length
   void ws.connect()
   void loadMore()
+})
+
+function applyRouteAction() {
+  const action = String(route.query.action ?? '')
+  if (action === 'create') {
+    void nextTick(() => createNameEl.value?.focus())
+    return
+  }
+  if (action === 'join') {
+    void nextTick(() => joinCodeEl.value?.focus())
+  }
+}
+
+watch(
+  () => route.query.action,
+  () => {
+    applyRouteAction()
+  },
+)
+
+onMounted(() => {
+  applyRouteAction()
 })
 </script>
 
@@ -176,7 +201,7 @@ onMounted(() => {
     <div class="create">
       <div class="muted" style="margin-bottom: 8px">创建群后成员通过“群码申请入群”，由群主/管理员审批。</div>
       <div class="row" style="gap: 10px">
-        <input v-model="createName" class="input" placeholder="群名" />
+        <input ref="createNameEl" v-model="createName" class="input" placeholder="群名" />
         <button class="btn primary" @click="createGroup">创建</button>
       </div>
       <div v-if="createStatus" class="muted" style="margin-top: 8px">{{ createStatus }}</div>
@@ -185,7 +210,13 @@ onMounted(() => {
     <div class="join">
       <div class="muted" style="margin-bottom: 8px">通过群码申请加入：</div>
       <div class="row" style="gap: 10px; align-items: stretch">
-        <input v-model="joinGroupCode" class="input" placeholder="GroupCode" style="max-width: 180px" />
+        <input
+          ref="joinCodeEl"
+          v-model="joinGroupCode"
+          class="input"
+          placeholder="GroupCode"
+          style="max-width: 180px"
+        />
         <input v-model="joinMessage" class="input" placeholder="验证信息(<=256)" />
         <button class="btn" @click="requestJoin">申请</button>
       </div>
@@ -195,7 +226,7 @@ onMounted(() => {
     <div class="sub muted">按 `updatedAt` 倒序，滚动加载。</div>
 
     <div class="list" @scroll="onScroll">
-      <UiListItem v-for="c in items" :key="c.groupId" :to="`/group/${c.groupId}`">
+      <UiListItem v-for="c in items" :key="c.groupId" :to="`/chats/group/${c.groupId}`">
         <template #left>
           <button class="avatarBtn" type="button" @click="openGroupProfile($event, c.groupId)">
             <UiAvatar :text="c.name || groups.displayName(c.groupId)" :seed="c.groupId" :size="46" />
@@ -229,6 +260,9 @@ onMounted(() => {
 
 <style scoped>
 .page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   border-radius: var(--radius-card);
   background: var(--surface);
   border: 1px solid var(--divider);
@@ -252,7 +286,7 @@ onMounted(() => {
   border-bottom: 1px solid var(--divider);
 }
 .list {
-  height: calc(100vh - 300px);
+  flex: 1;
   overflow: auto;
   padding: 0;
 }

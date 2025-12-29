@@ -46,15 +46,16 @@ const show = computed(() => props.dot || normalizedCount.value > 0)
   flex: none;
   min-width: 18px;
   height: 18px;
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 999px;
   display: inline-grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 18px;
+  font-weight: 800;
   color: #ffffff;
-  background: var(--danger);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--badge-red);
+  border: 1px solid #ffffff;
 }
 .uiBadge[data-tone='primary'] {
   background: var(--primary);
@@ -67,9 +68,9 @@ const show = computed(() => props.dot || normalizedCount.value > 0)
   width: 10px;
   height: 10px;
   padding: 0;
+  border-radius: 999px;
 }
 .text {
   transform: translateY(-0.2px);
 }
 </style>
-

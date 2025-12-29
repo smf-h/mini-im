@@ -81,12 +81,16 @@ async function resetFriendCode() {
   }
 }
 
+function startChat() {
+  void router.push(`/chats/dm/${userId.value}`)
+}
+
 function goBack() {
   if (window.history.length > 1) {
     router.back()
     return
   }
-  void router.push('/conversations')
+  void router.push('/contacts')
 }
 
 watch(
@@ -98,54 +102,76 @@ onMounted(() => void load())
 </script>
 
 <template>
-  <div class="card" style="padding: 14px">
-    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
-      <h2 style="margin: 0">{{ isMe ? '我的主页' : '个人主页' }}</h2>
-      <button class="btn" @click="goBack">返回</button>
-    </div>
-
-    <div v-if="loading" class="muted">加载中…</div>
-    <div v-else-if="profile" class="profile">
-      <UiAvatar :text="profile.nickname ?? profile.username ?? profile.id" :seed="profile.id" :size="68" />
-      <div class="info">
-        <div class="name">{{ profile.nickname || profile.username || profile.id }}</div>
-        <div class="meta muted">@{{ profile.username }}</div>
-        <div class="meta muted">uid={{ profile.id }}</div>
+  <div class="wrap">
+    <div class="card">
+      <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+        <h2 style="margin: 0">{{ isMe ? '我的主页' : '个人主页' }}</h2>
+        <button class="btn" @click="goBack">返回</button>
       </div>
-    </div>
 
-    <div v-if="profile" class="card" style="padding: 12px; margin-top: 12px">
-      <div class="row" style="justify-content: space-between">
-        <div>
-          <div style="font-weight: 750">FriendCode</div>
-          <div class="muted" style="font-size: 12px">用于加好友（不可枚举，可重置限频）</div>
+      <div v-if="loading" class="muted">加载中…</div>
+      <div v-else-if="profile" class="profile">
+        <UiAvatar :text="profile.nickname ?? profile.username ?? profile.id" :seed="profile.id" :size="68" />
+        <div class="info">
+          <div class="name">{{ profile.nickname || profile.username || profile.id }}</div>
+          <div class="meta muted">@{{ profile.username }}</div>
+          <div class="meta muted">uid={{ profile.id }}</div>
         </div>
-        <div class="code">{{ profile.friendCode || '—' }}</div>
       </div>
 
-      <div v-if="isMe && me" class="muted" style="margin-top: 8px; font-size: 12px">
-        <div>上次更新：{{ me.friendCodeUpdatedAt || '—' }}</div>
-        <div>下次可重置：{{ me.friendCodeNextResetAt || '—' }}</div>
+      <div v-if="profile" class="card inner">
+        <div class="row" style="justify-content: space-between">
+          <div>
+            <div style="font-weight: 750">FriendCode</div>
+            <div class="muted" style="font-size: 12px">用于加好友（不可枚举，可重置限频）</div>
+          </div>
+          <div class="code">{{ profile.friendCode || '—' }}</div>
+        </div>
+
+        <div v-if="isMe && me" class="muted" style="margin-top: 8px; font-size: 12px">
+          <div>上次更新：{{ me.friendCodeUpdatedAt || '—' }}</div>
+          <div>下次可重置：{{ me.friendCodeNextResetAt || '—' }}</div>
+        </div>
+
+        <div class="row" style="margin-top: 10px; justify-content: flex-end; flex-wrap: wrap">
+          <button v-if="isMe" class="btn" @click="resetFriendCode">重置 FriendCode</button>
+          <template v-else>
+            <button class="btn" @click="startChat">发消息</button>
+            <button class="btn primary" @click="sendFriendRequest">申请好友</button>
+          </template>
+        </div>
+
+        <div v-if="!isMe" style="margin-top: 10px">
+          <div class="muted" style="font-size: 12px; margin-bottom: 6px">验证信息</div>
+          <input v-model="requestMsg" class="input" />
+        </div>
+
+        <div v-if="sendStatus" class="muted" style="margin-top: 10px">{{ sendStatus }}</div>
       </div>
 
-      <div class="row" style="margin-top: 10px; justify-content: flex-end">
-        <button v-if="isMe" class="btn" @click="resetFriendCode">重置 FriendCode</button>
-        <button v-else class="btn primary" @click="sendFriendRequest">申请好友</button>
-      </div>
-
-      <div v-if="!isMe" style="margin-top: 10px">
-        <div class="muted" style="font-size: 12px; margin-bottom: 6px">验证信息</div>
-        <input v-model="requestMsg" class="input" />
-      </div>
-
-      <div v-if="sendStatus" class="muted" style="margin-top: 10px">{{ sendStatus }}</div>
+      <div v-if="errorMsg" class="muted" style="color: var(--danger); margin-top: 10px">{{ errorMsg }}</div>
     </div>
-
-    <div v-if="errorMsg" class="muted" style="color: var(--danger); margin-top: 10px">{{ errorMsg }}</div>
   </div>
 </template>
 
 <style scoped>
+.wrap {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+  background: var(--bg);
+}
+.card {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.card.inner {
+  padding: 12px;
+  margin-top: 12px;
+}
 .profile {
   display: flex;
   align-items: center;
@@ -170,4 +196,3 @@ onMounted(() => void load())
   color: rgba(17, 17, 17, 0.85);
 }
 </style>
-

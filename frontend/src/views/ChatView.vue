@@ -7,6 +7,7 @@ import type { WsEnvelope } from '../types/ws'
 import { useAuthStore } from '../stores/auth'
 import { useWsStore } from '../stores/ws'
 import { useUserStore } from '../stores/users'
+import { useDndStore } from '../stores/dnd'
 import { formatTime } from '../utils/format'
 import UiAvatar from '../components/UiAvatar.vue'
 
@@ -25,9 +26,11 @@ const router = useRouter()
 const auth = useAuthStore()
 const ws = useWsStore()
 const users = useUserStore()
+const dnd = useDndStore()
 
 const peerUserId = computed(() => String(route.params.peerUserId ?? ''))
 const peerName = computed(() => users.displayName(peerUserId.value))
+const dmMuted = computed(() => dnd.isDmMuted(peerUserId.value))
 const items = ref<UiMessage[]>([])
 const loading = ref(false)
 const done = ref(false)
@@ -131,7 +134,16 @@ function scrollToBottom() {
 }
 
 function openUser(id: string) {
-  void router.push(`/u/${id}`)
+  void router.push(`/contacts/u/${id}`)
+}
+
+async function toggleDmMute() {
+  if (!peerUserId.value) return
+  try {
+    await dnd.toggleDm(peerUserId.value)
+  } catch (e) {
+    errorMsg.value = `设置免打扰失败: ${String(e)}`
+  }
 }
 
 function resetAndLoad() {
@@ -363,6 +375,7 @@ onMounted(() => {
   void loadMore()
   void nextTick(() => scrollToBottom())
   void users.ensureBasics([peerUserId.value])
+  void dnd.hydrate()
   void refreshMemberState()
   window.addEventListener('focus', onFocus)
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -375,17 +388,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="card" style="padding: 14px">
-    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
-      <h2 style="margin: 0">聊天 {{ peerName }}</h2>
+  <div class="chatStage">
+    <header class="chatHeader">
+      <div class="headerMain">
+        <div class="title">{{ peerName || peerUserId }}</div>
+        <div class="sub muted">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
+      </div>
       <div class="row">
+        <button class="btn" @click="toggleDmMute">{{ dmMuted ? '已免打扰' : '免打扰' }}</button>
         <button class="btn" @click="openUser(peerUserId)">对方主页</button>
         <button class="btn" @click="resetAndLoad">刷新</button>
       </div>
-    </div>
-    <div class="muted" style="margin-bottom: 10px">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
+    </header>
 
-    <div ref="chatEl" class="chat" @scroll="onScroll">
+    <div ref="chatEl" class="chatBody" @scroll="onScroll">
       <div v-if="loading" class="muted" style="text-align: center; padding: 8px">加载中…</div>
       <div v-if="done && !loading" class="muted" style="text-align: center; padding: 8px">没有更多历史</div>
 
@@ -416,25 +432,57 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="row" style="margin-top: 12px">
+    <footer class="chatFooter">
       <input v-model="draft" class="input" placeholder="输入消息…" @keydown.enter="send" />
       <button class="btn primary" @click="send">发送</button>
-    </div>
-    <div v-if="errorMsg" class="muted" style="color: var(--danger); margin-top: 10px">{{ errorMsg }}</div>
+    </footer>
+
+    <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
   </div>
 </template>
 
 <style scoped>
-.chat {
-  height: calc(100vh - 240px);
+.chatStage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.chatHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+}
+.headerMain {
+  min-width: 0;
+}
+.title {
+  font-weight: 900;
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub {
+  margin-top: 2px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatBody {
+  flex: 1;
   overflow: auto;
-  padding: 10px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-top: 1px solid rgba(0, 0, 0, 0.03);
 }
 .msgRow {
   display: flex;
@@ -518,5 +566,19 @@ onUnmounted(() => {
 }
 .bubble.me .status {
   color: rgba(255, 255, 255, 0.9);
+}
+.chatFooter {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--divider);
+}
+.error {
+  padding: 10px 16px;
+  color: var(--danger);
+  background: rgba(250, 81, 81, 0.06);
+  border-top: 1px solid rgba(250, 81, 81, 0.14);
+  font-size: 12px;
 }
 </style>
