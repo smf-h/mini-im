@@ -8,7 +8,7 @@
 
 ### 目标与范围
 - **目标内:** 提供登录/鉴权能力，提供 WebSocket 网关能力，支撑消息与会话等领域模型。
-- **目标外:** 前端/客户端实现、生产化部署与运维体系（本仓库未体现）。
+- **目标外:** 生产化部署与运维体系（本仓库未体现）。
 
 ---
 
@@ -21,6 +21,7 @@
 | domain | 领域实体/枚举/Mapper/Service | 已实现 | modules/domain.md |
 | common | 通用返回体/错误码/全局异常处理 | 已实现 | modules/common.md |
 | config | MyBatis-Plus、线程池等基础配置 | 已实现 | modules/config.md |
+| frontend | Vue3+TS 联调前端（登录/会话/聊天/好友申请/站内通知） | 已实现 | modules/frontend.md |
 | cache | 缓存模块占位 | 待补充 | modules/cache.md |
 
 ---

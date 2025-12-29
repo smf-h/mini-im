@@ -17,11 +17,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum ChatType {
 
-    /** 1 = single */
-    SINGLE(1, "single"),
+    /** 1 = SINGLE_CHAT */
+    SINGLE(1, "SINGLE_CHAT"),
 
-    /** 2 = group */
-    GROUP(2, "group");
+    /** 2 = GROUP_CHAT */
+    GROUP(2, "GROUP_CHAT"),;
 
     @EnumValue
     private final Integer code;

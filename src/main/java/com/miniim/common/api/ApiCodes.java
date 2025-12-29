@@ -15,6 +15,9 @@ public final class ApiCodes {
 
     /** 未登录 / token 无效 */
     public static final int UNAUTHORIZED = 40100;
+    public static final int FORBIDDEN = 40300;
+    public static final int NOT_FOUND = 40400;
+    public static final int TOO_MANY_REQUESTS = 42900;
 
     /** 服务端未预期异常 */
     public static final int INTERNAL_ERROR = 50000;

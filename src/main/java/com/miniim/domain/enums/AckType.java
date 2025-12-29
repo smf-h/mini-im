@@ -20,15 +20,11 @@ public enum AckType {
     /** 1 = saved */
     SAVED(1, "saved"),
 
-    /** 2 = read */
-    READ(2, "read"),
+    /** 2 = delivered */
+    DELIVERED(2, "delivered"),
 
-    /**
-     * 3 = delivered
-     */
-    DELIVERED(3,"delivered") ,
-    RECEIVED(4,"received"),
-    DROPPED(5,"dropped");
+    /** 3 = read */
+    READ(3, "read");
 
 
     @EnumValue
@@ -36,3 +32,4 @@ public enum AckType {
 
     private final String desc;
 }
+
