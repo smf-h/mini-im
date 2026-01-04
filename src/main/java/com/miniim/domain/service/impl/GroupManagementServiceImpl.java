@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -24,6 +25,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class GroupManagementServiceImpl implements GroupManagementService {
+
+    private static final LocalDateTime MUTE_FOREVER = LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_000_000);
 
     private final GroupMapper groupMapper;
     private final GroupMemberMapper groupMemberMapper;
@@ -131,10 +134,70 @@ public class GroupManagementServiceImpl implements GroupManagementService {
                     u == null ? null : u.getNickname(),
                     u == null ? null : u.getAvatarUrl(),
                     m.getRole(),
-                    m.getJoinAt()
+                    m.getJoinAt(),
+                    m.getSpeakMuteUntil()
             ));
         }
         return out;
+    }
+
+    @Transactional
+    @Override
+    public void muteMember(long operatorId, long groupId, long targetUserId, long durationSeconds) {
+        if (operatorId <= 0) {
+            throw new IllegalArgumentException("unauthorized");
+        }
+        if (groupId <= 0 || targetUserId <= 0) {
+            throw new IllegalArgumentException("bad_request");
+        }
+        if (operatorId == targetUserId) {
+            throw new IllegalArgumentException("cannot_mute_self");
+        }
+
+        MemberRole op = getRole(groupId, operatorId);
+        if (op != MemberRole.OWNER && op != MemberRole.ADMIN) {
+            throw new IllegalArgumentException("forbidden");
+        }
+
+        GroupMemberEntity target = groupMemberMapper.selectOne(new LambdaQueryWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId)
+                .eq(GroupMemberEntity::getUserId, targetUserId)
+                .last("limit 1"));
+        if (target == null) {
+            throw new IllegalArgumentException("target_not_member");
+        }
+        MemberRole tr = target.getRole();
+        if (tr == MemberRole.OWNER) {
+            throw new IllegalArgumentException("forbidden");
+        }
+
+        boolean allowed = false;
+        if (op == MemberRole.OWNER) {
+            allowed = true;
+        } else if (op == MemberRole.ADMIN) {
+            allowed = tr == MemberRole.MEMBER;
+        }
+        if (!allowed) {
+            throw new IllegalArgumentException("forbidden");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime muteUntil = null;
+        if (durationSeconds == 0) {
+            muteUntil = null;
+        } else if (durationSeconds == -1) {
+            muteUntil = MUTE_FOREVER;
+        } else if (durationSeconds == 600 || durationSeconds == 3600 || durationSeconds == 86400) {
+            muteUntil = now.plus(durationSeconds, ChronoUnit.SECONDS);
+        } else {
+            throw new IllegalArgumentException("bad_duration");
+        }
+
+        groupMemberMapper.update(null, new LambdaUpdateWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId)
+                .eq(GroupMemberEntity::getUserId, targetUserId)
+                .set(GroupMemberEntity::getSpeakMuteUntil, muteUntil)
+                .set(GroupMemberEntity::getUpdatedAt, now));
     }
 
     @Transactional

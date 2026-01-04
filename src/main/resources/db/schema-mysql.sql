@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS t_group_member (
   role TINYINT NOT NULL DEFAULT 3 COMMENT '1=owner,2=admin,3=member',
   join_at DATETIME(3) NOT NULL,
   mute_until DATETIME(3) NULL,
+  speak_mute_until DATETIME(3) NULL,
   last_delivered_msg_id BIGINT NULL,
   last_read_msg_id BIGINT NULL,
   created_at DATETIME(3) NOT NULL,

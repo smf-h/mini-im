@@ -2,6 +2,7 @@ package com.miniim.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
@@ -10,6 +11,7 @@ import java.util.concurrent.Executor;
 public class ImExecutorsConfig {
 
     @Bean("imDbExecutor")
+    @Primary
     public Executor imDbExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("im-db-");

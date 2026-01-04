@@ -175,6 +175,38 @@ public class GroupProfileController {
     public record ResetGroupCodeRequest(@NotNull Long groupId) {
     }
 
+    public record MuteMemberRequest(
+            @NotNull Long groupId,
+            @NotNull Long userId,
+            long durationSeconds
+    ) {
+    }
+
+    @PostMapping("/member/mute")
+    public Result<Void> muteMember(@RequestBody MuteMemberRequest req) {
+        Long operatorId = AuthContext.getUserId();
+        if (operatorId == null) {
+            return Result.fail(ApiCodes.UNAUTHORIZED, "unauthorized");
+        }
+        if (req == null || req.groupId() == null || req.userId() == null) {
+            return Result.fail(ApiCodes.BAD_REQUEST, "bad_request");
+        }
+        try {
+            groupManagementService.muteMember(
+                    operatorId,
+                    req.groupId() == null ? 0 : req.groupId(),
+                    req.userId() == null ? 0 : req.userId(),
+                    req.durationSeconds()
+            );
+            return Result.ok(null);
+        } catch (IllegalArgumentException e) {
+            String msg = e.getMessage();
+            if ("unauthorized".equals(msg)) return Result.fail(ApiCodes.UNAUTHORIZED, msg);
+            if ("forbidden".equals(msg)) return Result.fail(ApiCodes.FORBIDDEN, msg);
+            return Result.fail(ApiCodes.BAD_REQUEST, msg == null ? "bad_request" : msg);
+        }
+    }
+
     @PostMapping("/code/reset")
     public Result<GroupManagementService.ResetGroupCodeResult> resetGroupCode(@RequestBody ResetGroupCodeRequest req) {
         Long operatorId = AuthContext.getUserId();

@@ -21,6 +21,13 @@ public interface GroupManagementService {
 
     void transferOwner(long operatorId, long groupId, long newOwnerUserId);
 
+    /**
+     * 设置/解除群成员禁言（发言限制）。
+     *
+     * <p>约定：durationSeconds 仅接受预设值（0/600/3600/86400/-1）。</p>
+     */
+    void muteMember(long operatorId, long groupId, long targetUserId, long durationSeconds);
+
     ResetGroupCodeResult resetGroupCode(long operatorId, long groupId);
 
     record GroupProfile(
@@ -43,7 +50,8 @@ public interface GroupManagementService {
             String nickname,
             String avatarUrl,
             MemberRole role,
-            LocalDateTime joinAt
+            LocalDateTime joinAt,
+            LocalDateTime speakMuteUntil
     ) {
     }
 
@@ -54,4 +62,3 @@ public interface GroupManagementService {
     ) {
     }
 }
-

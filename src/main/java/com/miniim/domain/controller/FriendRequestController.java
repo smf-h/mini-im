@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.miniim.auth.web.AuthContext;
 import com.miniim.common.api.Result;
 import com.miniim.common.api.ApiCodes;
+import com.miniim.common.content.ForbiddenWordFilter;
 import com.miniim.domain.entity.FriendRequestEntity;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.enums.FriendRequestStatus;
@@ -31,6 +32,7 @@ public class FriendRequestController {
     private final FriendRequestService friendRequestService;
     private final UserMapper userMapper;
     private final WsPushService wsPushService;
+    private final ForbiddenWordFilter forbiddenWordFilter;
 
     /**
      * 游标分页：按 id 倒序返回。
@@ -137,7 +139,7 @@ public class FriendRequestController {
         if (code.isEmpty() || code.length() > 16) {
             return Result.fail(ApiCodes.BAD_REQUEST, "bad_friend_code");
         }
-        String msg = request.message();
+        String msg = forbiddenWordFilter.sanitize(request.message());
         if (msg != null && msg.length() > 256) {
             return Result.fail(ApiCodes.BAD_REQUEST, "message_too_long");
         }

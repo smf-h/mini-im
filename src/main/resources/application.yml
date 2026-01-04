@@ -45,7 +45,9 @@ im:
       maximum-size: 1000
       expire-after-access-seconds: 600
   cron:
-    scan-dropped:
+    resend:
+      # 可选兜底补发：默认关闭；需要时改为 true
+      enabled: false
       fixed-delay-ms: 60000
   auth:
     issuer: mini-im
