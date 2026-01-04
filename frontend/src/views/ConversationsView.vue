@@ -167,15 +167,18 @@ onMounted(() => {
 .page {
   border-radius: var(--radius-card);
   background: var(--surface);
-  border: 1px solid var(--divider);
-  box-shadow: var(--shadow-card);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
   overflow: hidden;
 }
 .header {
-  padding: 14px 14px 10px;
+  padding: 18px 18px 12px;
+  background: linear-gradient(135deg, rgba(7, 193, 96, 0.02) 0%, transparent 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 .sub {
-  padding: 0 14px 10px;
+  padding: 0 18px 12px;
+  font-size: 11px;
 }
 .list {
   height: calc(100vh - 170px);
@@ -189,33 +192,42 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 4px;
+  gap: 12px;
+  margin-bottom: 6px;
 }
 .name {
-  font-weight: 750;
-  font-size: 16px;
+  font-weight: 600;
+  font-size: 15px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: rgba(15, 23, 42, 0.92);
+  letter-spacing: -0.01em;
 }
 .time {
   flex: none;
-  font-size: 12px;
-  color: var(--text-3);
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.45);
+  font-weight: 500;
 }
 .preview {
   font-size: 13px;
-  color: var(--text-2);
+  color: rgba(15, 23, 42, 0.55);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.4;
 }
 .avatarBtn {
   border: 0;
   padding: 0;
   background: transparent;
   cursor: pointer;
+  transition: transform 120ms ease;
+  border-radius: 50%;
+}
+.avatarBtn:hover {
+  transform: scale(1.05);
 }
 </style>

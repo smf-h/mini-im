@@ -413,67 +413,113 @@ onUnmounted(() => {
   cursor: pointer;
   display: grid;
   place-items: center;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.meBtn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .meMenu {
   position: absolute;
-  left: 58px;
-  bottom: 58px;
-  width: 220px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
+  left: 68px;
+  bottom: 0;
+  width: 240px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.08);
   overflow: hidden;
 }
 .meMenu::before {
   content: '';
   position: absolute;
-  left: -6px;
-  bottom: 18px;
+  left: -5px;
+  bottom: 20px;
   width: 10px;
   height: 10px;
-  background: rgba(255, 255, 255, 0.92);
-  border-left: 1px solid rgba(0, 0, 0, 0.08);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  border-left: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   transform: rotate(45deg);
 }
 .meMeta {
-  padding: 12px 12px 10px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 16px 14px 14px;
+  background: linear-gradient(135deg, rgba(7, 193, 96, 0.04) 0%, rgba(59, 130, 246, 0.03) 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
 .meTitle {
-  font-weight: 850;
+  font-weight: 700;
   color: #0f172a;
   font-size: 13px;
+  letter-spacing: -0.01em;
 }
 .meSub {
-  margin-top: 2px;
-  font-size: 12px;
-  color: rgba(15, 23, 42, 0.72);
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.55);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.meSub::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #07c160;
+  box-shadow: 0 0 8px rgba(7, 193, 96, 0.5);
 }
 .meActions {
-  padding: 8px;
+  padding: 10px;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 .menuBtn {
   width: 100%;
   text-align: left;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(255, 255, 255, 0.88);
-  padding: 9px 10px;
-  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 10px;
   cursor: pointer;
   font-size: 13px;
-  color: rgba(15, 23, 42, 0.92);
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.85);
+  transition: all 140ms ease;
+  position: relative;
+  overflow: hidden;
+}
+.menuBtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.04);
+  opacity: 0;
+  transition: opacity 140ms ease;
 }
 .menuBtn:hover {
-  background: #ffffff;
+  color: rgba(15, 23, 42, 0.95);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+.menuBtn:hover::before {
+  opacity: 1;
+}
+.menuBtn > * {
+  position: relative;
+  z-index: 1;
 }
 .menuBtn.danger {
-  border-color: rgba(250, 81, 81, 0.26);
-  background: rgba(250, 81, 81, 0.08);
+  color: #f43f5e;
+}
+.menuBtn.danger:hover {
+  border-color: rgba(244, 63, 94, 0.2);
+  background: rgba(244, 63, 94, 0.06);
+}
+.menuBtn.danger:hover::before {
+  opacity: 0;
 }
 .mainStage {
   flex: 1;

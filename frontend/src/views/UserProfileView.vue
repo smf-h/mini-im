@@ -115,7 +115,6 @@ onMounted(() => void load())
         <div class="info">
           <div class="name">{{ profile.nickname || profile.username || profile.id }}</div>
           <div class="meta muted">@{{ profile.username }}</div>
-          <div class="meta muted">uid={{ profile.id }}</div>
         </div>
       </div>
 

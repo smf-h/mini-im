@@ -308,6 +308,7 @@ function applyWsEvent(ev: WsEnvelope) {
     if (!target) return
     target.status = 'sent'
     if (ev.serverMsgId) target.serverMsgId = ev.serverMsgId
+    if (ev.body) target.content = ev.body
     if (target.serverMsgId) {
       const sid = toBigIntOrNull(target.serverMsgId)
       if (sid != null && sid <= peerReadUpTo) {
@@ -479,7 +480,6 @@ watch(
     <header class="chatHeader">
       <div class="headerMain">
         <div class="title">{{ peerName || peerUserId }}</div>
-        <div class="sub muted">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
       </div>
       <div class="row">
         <button class="btn" :disabled="call.busy" @click="startVideoCall">视频通话</button>
@@ -606,16 +606,17 @@ watch(
 .chatBody {
   flex: 1;
   overflow: auto;
-  padding: 14px 16px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   background: var(--bg-soft);
   border-top: 1px solid rgba(0, 0, 0, 0.03);
 }
 .msgRow {
   display: flex;
   justify-content: flex-start;
+  align-items: flex-start;
 }
 .msgRow.me {
   justify-content: flex-end;
@@ -625,7 +626,11 @@ watch(
   padding: 0;
   background: transparent;
   cursor: pointer;
-  align-self: flex-end;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.msgRow:not(.me) .avatarBtn {
+  margin-right: 10px;
 }
 .avatarBtn.me {
   margin-left: 10px;
@@ -633,56 +638,62 @@ watch(
 .bubble {
   display: inline-block;
   width: fit-content;
-  max-width: min(72%, 560px);
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  max-width: min(68%, 480px);
+  padding: 8px 12px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
   background: #ffffff;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
   position: relative;
 }
 .bubble.me {
-  border-color: rgba(7, 193, 96, 0.55);
-  background: var(--primary);
+  border-color: rgba(7, 193, 96, 0.3);
+  background: #07c160;
   color: #ffffff;
 }
 .bubble::after {
   content: '';
   position: absolute;
   top: 12px;
-  left: -6px;
-  width: 10px;
-  height: 10px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
   background: #ffffff;
-  border-left: 1px solid rgba(15, 23, 42, 0.06);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  border-left: 1px solid rgba(15, 23, 42, 0.05);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
   transform: rotate(45deg);
 }
 .bubble.me::after {
   left: auto;
-  right: -6px;
-  background: var(--primary);
+  right: -5px;
+  background: #07c160;
   border-left: 0;
   border-bottom: 0;
-  border-right: 1px solid rgba(7, 193, 96, 0.45);
-  border-top: 1px solid rgba(7, 193, 96, 0.45);
+  border-right: 1px solid rgba(7, 193, 96, 0.3);
+  border-top: 1px solid rgba(7, 193, 96, 0.3);
 }
 .bubble.me .muted {
-  color: rgba(255, 255, 255, 0.86);
+  color: rgba(255, 255, 255, 0.75);
+}
+.bubble:not(.me) .muted {
+  color: rgba(15, 23, 42, 0.5);
 }
 .meta {
   display: flex;
-  gap: 10px;
+  justify-content: space-between;
   align-items: center;
-  font-size: 12px;
-  margin-bottom: 4px;
+  font-size: 11px;
+  margin-bottom: 6px;
+  gap: 8px;
 }
 .bubble.me .meta {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
 }
 .content {
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 15px;
+  line-height: 1.5;
 }
 .status.sending {
   color: var(--muted);

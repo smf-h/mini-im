@@ -10,14 +10,18 @@ import type {
   MemberRole,
   ResetGroupCodeResponse,
 } from '../types/api'
+import { useAuthStore } from '../stores/auth'
 import { useGroupStore } from '../stores/groups'
 import { useUserStore } from '../stores/users'
 import UiAvatar from '../components/UiAvatar.vue'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const groups = useGroupStore()
 const users = useUserStore()
+
+auth.hydrateFromStorage()
 
 const groupId = computed(() => String(route.params.groupId ?? ''))
 const loading = ref(false)
@@ -34,6 +38,28 @@ const memberMenuUserId = ref<string | null>(null)
 const myRole = computed<MemberRole | null>(() => profile.value?.myRole ?? null)
 const canManage = computed(() => myRole.value === 'OWNER' || myRole.value === 'ADMIN')
 const isOwner = computed(() => myRole.value === 'OWNER')
+const myUserId = computed(() => auth.userId ?? null)
+
+function toTs(v?: string | null) {
+  if (!v) return null
+  const t = new Date(v).getTime()
+  if (!Number.isFinite(t)) return null
+  return t
+}
+
+function isSpeakMuted(m: GroupMemberDto) {
+  const t = toTs(m.speakMuteUntil ?? null)
+  return t != null && t > Date.now()
+}
+
+function speakMuteLabel(m: GroupMemberDto) {
+  const t = toTs(m.speakMuteUntil ?? null)
+  if (t == null || t <= Date.now()) return null
+  const d = new Date(t)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `禁言至 ${hh}:${mm}`
+}
 
 function goBack() {
   if (window.history.length > 1) {
@@ -221,6 +247,27 @@ function canToggleAdmin(targetRole: MemberRole) {
   return isOwner.value && targetRole !== 'OWNER'
 }
 
+function canMute(targetUserId: string, targetRole: MemberRole) {
+  if (!canManage.value) return false
+  if (myUserId.value && String(targetUserId) === String(myUserId.value)) return false
+  if (myRole.value === 'OWNER') return targetRole !== 'OWNER'
+  if (myRole.value === 'ADMIN') return targetRole === 'MEMBER'
+  return false
+}
+
+async function muteMember(userId: string, durationSeconds: number) {
+  statusMsg.value = null
+  errorMsg.value = null
+  try {
+    memberMenuUserId.value = null
+    await apiPost(`/group/member/mute`, { groupId: groupId.value, userId, durationSeconds })
+    statusMsg.value = durationSeconds === 0 ? '已解除禁言' : '已设置禁言'
+    await load()
+  } catch (e) {
+    errorMsg.value = String(e)
+  }
+}
+
 function toggleMemberMenu(userId: string) {
   memberMenuUserId.value = memberMenuUserId.value === userId ? null : userId
 }
@@ -287,9 +334,10 @@ onMounted(() => void load())
                 <UiAvatar :text="m.nickname ?? m.username ?? m.userId" :seed="m.userId" :size="46" />
                 <div class="memberName">{{ m.nickname ?? m.username ?? m.userId }}</div>
                 <div class="memberRole muted">{{ m.role }}</div>
+                <div v-if="isSpeakMuted(m)" class="muteTag">禁言中</div>
               </button>
               <button
-                v-if="canKick(m.role) || canToggleAdmin(m.role) || (isOwner && m.role !== 'OWNER')"
+                v-if="canKick(m.role) || canToggleAdmin(m.role) || (isOwner && m.role !== 'OWNER') || canMute(m.userId, m.role)"
                 class="moreBtn"
                 type="button"
                 aria-label="成员操作"
@@ -298,6 +346,27 @@ onMounted(() => void load())
                 ⋯
               </button>
               <div v-if="memberMenuUserId === m.userId" class="memberMenu">
+                <div v-if="speakMuteLabel(m)" class="menuHint muted">{{ speakMuteLabel(m) }}</div>
+                <button
+                  v-if="canMute(m.userId, m.role) && isSpeakMuted(m)"
+                  class="menuItem"
+                  type="button"
+                  @click="muteMember(m.userId, 0)"
+                >
+                  解除禁言
+                </button>
+                <button v-if="canMute(m.userId, m.role)" class="menuItem" type="button" @click="muteMember(m.userId, 600)">
+                  禁言 10 分钟
+                </button>
+                <button v-if="canMute(m.userId, m.role)" class="menuItem" type="button" @click="muteMember(m.userId, 3600)">
+                  禁言 1 小时
+                </button>
+                <button v-if="canMute(m.userId, m.role)" class="menuItem" type="button" @click="muteMember(m.userId, 86400)">
+                  禁言 1 天
+                </button>
+                <button v-if="canMute(m.userId, m.role)" class="menuItem" type="button" @click="muteMember(m.userId, -1)">
+                  永久禁言
+                </button>
                 <button v-if="canToggleAdmin(m.role)" class="menuItem" type="button" @click="setAdmin(m.userId, m.role !== 'ADMIN')">
                   {{ m.role === 'ADMIN' ? '取消管理员' : '设为管理员' }}
                 </button>
@@ -331,7 +400,6 @@ onMounted(() => void load())
               </button>
               <div class="reqMain">
                 <div class="reqName">{{ users.displayName(r.fromUserId) }}</div>
-                <div class="reqMeta">uid={{ r.fromUserId }} · #{{ r.id }}</div>
                 <div v-if="r.message" class="reqMsg">{{ r.message }}</div>
               </div>
               <div class="reqActions">
@@ -557,6 +625,11 @@ onMounted(() => void load())
   overflow: hidden;
   z-index: 5;
 }
+.menuHint {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+}
 .menuItem {
   width: 100%;
   text-align: left;
@@ -587,6 +660,19 @@ onMounted(() => void load())
   color: rgba(17, 17, 17, 0.62);
   font-size: 22px;
   line-height: 1;
+}
+.muteTag {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(250, 81, 81, 0.92);
+  background: rgba(250, 81, 81, 0.08);
+  border: 1px solid rgba(250, 81, 81, 0.18);
+  padding: 0 8px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
 }
 .reqList {
   margin-top: 10px;

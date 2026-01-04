@@ -148,6 +148,7 @@ export type GroupMemberDto = {
   avatarUrl?: string | null
   role: MemberRole
   joinAt?: string | null
+  speakMuteUntil?: string | null
 }
 
 export type GroupJoinRequestStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELED'

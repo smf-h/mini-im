@@ -30,6 +30,8 @@ const users = useUserStore()
 const groups = useGroupStore()
 const dnd = useDndStore()
 
+auth.hydrateFromStorage()
+
 const groupId = computed(() => String(route.params.groupId ?? ''))
 const groupName = computed(() => groups.displayName(groupId.value))
 const groupMuted = computed(() => dnd.isGroupMuted(groupId.value))
@@ -60,6 +62,29 @@ let lastSentReadAck: bigint = 0n
 const members = ref<GroupMemberDto[]>([])
 const membersLoaded = ref(false)
 
+const selfSpeakMutedUntilTs = computed(() => {
+  const uid = auth.userId
+  if (!uid) return null
+  const me = members.value.find((m) => String(m.userId) === String(uid))
+  const t = toTs(me?.speakMuteUntil ?? null)
+  if (t == null) return null
+  return t > Date.now() ? t : null
+})
+
+const selfSpeakMutedText = computed(() => {
+  const t = selfSpeakMutedUntilTs.value
+  if (t == null) return null
+  const d = new Date(t)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `你已被禁言至 ${hh}:${mm}，期间不能发送群消息`
+})
+
+const selfSpeakMuted = computed(() => selfSpeakMutedUntilTs.value != null)
+const draftPlaceholder = computed(() =>
+  selfSpeakMuted.value ? '你已被禁言，暂时无法发送' : '输入消息…（输入 @ 可选群成员；也可手动 @123；回复可触发重要提醒）',
+)
+
 const mentionOpen = ref(false)
 const mentionStart = ref<number | null>(null)
 const mentionQuery = ref('')
@@ -69,6 +94,13 @@ const mentionWrapEl = ref<HTMLElement | null>(null)
 
 function uuid() {
   return crypto.randomUUID()
+}
+
+function toTs(v?: string | null) {
+  if (!v) return null
+  const t = new Date(v).getTime()
+  if (!Number.isFinite(t)) return null
+  return t
 }
 
 function toBigIntOrNull(id?: string | null) {
@@ -421,6 +453,10 @@ async function toggleGroupMute() {
 
 async function send() {
   errorMsg.value = null
+  if (selfSpeakMuted.value) {
+    errorMsg.value = selfSpeakMutedText.value ?? '你已被禁言，暂时无法发送'
+    return
+  }
   const content = draft.value.trim()
   if (!content) return
   const replyToServerMsgId = replyTo.value?.serverMsgId ?? null
@@ -467,13 +503,18 @@ function applyWsEvent(ev: WsEnvelope) {
     if (!target) return
     target.status = 'sent'
     if (ev.serverMsgId) target.serverMsgId = ev.serverMsgId
+    if (ev.body) target.content = ev.body
     return
   }
 
   if (ev.type === 'ERROR' && ev.clientMsgId) {
     const target = items.value.find((m) => m.clientMsgId === ev.clientMsgId)
     if (target) {
-      errorMsg.value = `发送失败: ${ev.reason ?? 'error'}`
+      if (ev.reason === 'group_speak_muted') {
+        errorMsg.value = selfSpeakMutedText.value ?? '你已被禁言，暂时无法发送'
+      } else {
+        errorMsg.value = `发送失败: ${ev.reason ?? 'error'}`
+      }
     }
     return
   }
@@ -568,7 +609,7 @@ watch(
     <header class="chatHeader">
       <div class="headerMain">
         <div class="title">{{ groupName || `群聊 ${groupId}` }}</div>
-        <div class="sub muted">上滑加载历史；发送以 `ACK(saved)` 作为“已发送”。</div>
+        <div v-if="selfSpeakMutedText" class="sub muted" style="color: var(--danger)">{{ selfSpeakMutedText }}</div>
       </div>
       <div class="row">
         <button class="btn" @click="toggleGroupMute">{{ groupMuted ? '已免打扰' : '免打扰' }}</button>
@@ -640,12 +681,13 @@ watch(
           ref="draftEl"
           v-model="draft"
           class="input"
-          placeholder="输入消息…（输入 @ 可选群成员；也可手动 @123；回复可触发重要提醒）"
+          :disabled="selfSpeakMuted"
+          :placeholder="draftPlaceholder"
           @input="onDraftInput"
           @keydown="onDraftKeyDown"
         />
       </div>
-      <button class="btn primary" @click="send">发送</button>
+      <button class="btn primary" :disabled="selfSpeakMuted" @click="send">发送</button>
     </footer>
 
     <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
@@ -688,73 +730,122 @@ watch(
 .chatBody {
   flex: 1;
   overflow: auto;
-  padding: 14px 16px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   background: var(--bg-soft);
   border-top: 1px solid rgba(0, 0, 0, 0.03);
 }
 .msgRow {
   display: flex;
   justify-content: flex-start;
+  align-items: flex-start;
 }
 .msgRow.me {
   justify-content: flex-end;
 }
 .bubble {
-  max-width: min(560px, 78%);
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  display: inline-block;
+  width: fit-content;
+  max-width: min(68%, 480px);
+  padding: 8px 12px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
   background: #ffffff;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  position: relative;
+}
+.bubble::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  background: #ffffff;
+  border-left: 1px solid rgba(15, 23, 42, 0.05);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  transform: rotate(45deg);
 }
 .bubble.me {
-  background: rgba(7, 193, 96, 0.18);
-  border-color: rgba(7, 193, 96, 0.24);
+  background: #07c160;
+  border-color: rgba(7, 193, 96, 0.3);
+  color: #ffffff;
+}
+.bubble.me::after {
+  left: auto;
+  right: -5px;
+  background: #07c160;
+  border-left: 0;
+  border-bottom: 0;
+  border-right: 1px solid rgba(7, 193, 96, 0.3);
+  border-top: 1px solid rgba(7, 193, 96, 0.3);
 }
 .bubble.important:not(.me) {
-  border-color: rgba(59, 130, 246, 0.32);
-  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.12);
 }
 .meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 8px;
+  font-size: 11px;
   margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.bubble:not(.me) .muted {
+  color: rgba(15, 23, 42, 0.5);
+}
+.bubble.me .muted {
+  color: rgba(255, 255, 255, 0.75);
 }
 .content {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.4;
+  font-size: 15px;
+  line-height: 1.5;
 }
 .status {
   margin-left: auto;
-  font-size: 12px;
-  color: rgba(15, 23, 42, 0.72);
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.5);
+}
+.bubble.me .status {
+  color: rgba(255, 255, 255, 0.75);
 }
 .tag {
-  padding: 0 8px;
+  padding: 2px 8px;
   height: 18px;
   border-radius: 999px;
-  background: rgba(59, 130, 246, 0.18);
-  border: 1px solid rgba(59, 130, 246, 0.24);
-  color: rgba(30, 64, 175, 0.9);
-  line-height: 18px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: rgba(30, 64, 175, 0.95);
+  line-height: 14px;
+  font-size: 11px;
+  font-weight: 700;
 }
 .miniBtn {
-  border: 1px solid rgba(15, 23, 42, 0.12);
+  border: 1px solid rgba(15, 23, 42, 0.1);
   background: rgba(255, 255, 255, 0.9);
-  padding: 0 10px;
-  height: 22px;
+  padding: 2px 10px;
+  height: 20px;
   border-radius: 999px;
-  color: rgba(15, 23, 42, 0.72);
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.65);
   cursor: pointer;
 }
 .miniBtn:hover {
-  background: rgba(15, 23, 42, 0.04);
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.15);
+}
+.bubble.me .miniBtn {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+.bubble.me .miniBtn:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 .replyBar {
   margin: 10px 16px 0;
@@ -779,7 +870,11 @@ watch(
   padding: 0;
   background: transparent;
   cursor: pointer;
-  align-self: flex-end;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.msgRow:not(.me) .avatarBtn {
+  margin-right: 10px;
 }
 .avatarBtn.me {
   margin-left: 10px;

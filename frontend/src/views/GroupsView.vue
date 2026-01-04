@@ -223,8 +223,6 @@ onMounted(() => {
       <div v-if="joinStatus" class="muted" style="margin-top: 8px">{{ joinStatus }}</div>
     </div>
 
-    <div class="sub muted">按 `updatedAt` 倒序，滚动加载。</div>
-
     <div class="list" @scroll="onScroll">
       <UiListItem v-for="c in items" :key="c.groupId" :to="`/chats/group/${c.groupId}`">
         <template #left>
