@@ -117,3 +117,14 @@
 - 服务端同步（跨端一致）：
   - 登录后会调用 `GET /dnd/list` 拉取服务端配置覆盖本地缓存
   - 切换开关会调用 `POST /dnd/dm/set` / `POST /dnd/group/set` 写入服务端；失败会回滚到旧值
+
+## 群聊禁言（发言限制）
+- 目标：管理员对成员限制发言（禁止发送群消息），与“免打扰（仅屏蔽 toast）”语义严格分离。
+- UI：
+  - 群资料页：`frontend/src/views/GroupProfileView.vue` 成员菜单提供「禁言 10 分钟 / 1 小时 / 1 天 / 永久 / 解除」
+  - 群聊页：`frontend/src/views/GroupChatView.vue` 在顶部提示禁言状态，并禁用输入框/发送按钮
+- 依赖接口：
+  - `POST /group/member/mute`
+  - `GET /group/member/list`（用于展示 `speakMuteUntil`）
+- WS 行为：
+  - 被禁言用户发送 `GROUP_CHAT` 会收到 `ERROR reason=group_speak_muted`，前端提示并不落库消息

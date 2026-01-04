@@ -1,5 +1,7 @@
 # 测试说明
 
+> **注意**：详细的测试规范、分层策略及代码编写要求，请参考 [TESTING_SPEC.md](TESTING_SPEC.md)。本文档主要侧重于“如何运行”现有的联调与冒烟脚本。
+
 ## 前端联调（Vue3 + TypeScript）
 
 前置条件：
@@ -22,7 +24,7 @@
 
 补充说明：
 - 当前离线补发逻辑在服务端 `AUTH` 处理后触发；即使已在握手阶段完成鉴权，仍会在收到 `AUTH` 帧后执行离线补发。
-- 定时扫描频率可通过 `im.cron.scan-dropped.fixed-delay-ms` 调整（默认 5s；本地联调可调大减少干扰）。
+- 可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）；频率可通过 `im.cron.resend.fixed-delay-ms` 调整（默认 30s；本地联调可调大减少干扰）。
 
 前置条件：
 - 服务端已启动（HTTP `:8080` + WS `:9001/ws`）

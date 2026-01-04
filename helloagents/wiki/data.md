@@ -39,6 +39,9 @@ schema 已包含常用索引：
 
 - 单聊：`t_single_chat_member`（`single_chat_id + user_id` 唯一）保存每个用户在该会话的 `last_delivered_msg_id / last_read_msg_id`。
 - 群聊：`t_group_member` 保存每个成员在该群的 `last_delivered_msg_id / last_read_msg_id`。
+- 群聊管理：
+  - `t_group_member.mute_until`：免打扰（仅屏蔽通知，不影响收发消息）
+  - `t_group_member.speak_mute_until`：禁言（发言限制；在 WS `GROUP_CHAT` 入口强制校验）
 - 服务端在用户 `AUTH` 后按游标补发：拉取 `id > last_delivered_msg_id` 的未投递区间下发给该用户。
 
 ---

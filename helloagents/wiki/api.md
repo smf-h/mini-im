@@ -101,12 +101,17 @@
   - 用途：通过群码查群（用于申请入群）
 - `GET /group/member/list?groupId=20001`
   - 用途：成员列表（仅成员可见）
+  - 说明：返回字段以代码为准；新增 `speakMuteUntil` 用于展示“禁言（发言限制）”状态
 - `POST /group/code/reset`
   - 用途：重置群码（owner/admin；服务端限频；返回 42900 表示冷却未到）
 - `POST /group/member/kick`
   - 用途：踢人（owner 可踢非 owner；admin 仅可踢 member）
 - `POST /group/member/set-admin`
   - 用途：设/取消管理员（仅 owner）
+- `POST /group/member/mute`
+  - 用途：禁言/解除禁言（发言限制；owner 可禁言 admin/member；admin 仅可禁言 member）
+  - body：`{ "groupId": 20001, "userId": 30001, "durationSeconds": 600 }`
+    - `0`=解除；`600`=10分钟；`3600`=1小时；`86400`=1天；`-1`=永久
 - `POST /group/owner/transfer`
   - 用途：转让群主（仅 owner）
 - `POST /group/leave`
@@ -197,6 +202,9 @@
 - `CALL_ERROR`：通话相关错误回包。
 - `ACK`：业务回执（用于幂等确认/接收确认）。
 - `ERROR`：错误回包。
+
+通用约定：
+- 服务端会对 `body`/`message` 做违禁词替换（命中则替换为 `***`），不改变消息语义字段（type/to/groupId 等）。
 
 ### SINGLE_CHAT（客户端 → 服务端）
 - 必填字段：

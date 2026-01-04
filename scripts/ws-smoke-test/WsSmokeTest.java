@@ -362,7 +362,7 @@ public class WsSmokeTest {
      *
      * 备注：
      * - WsCron 当前扫描条件：status=SAVED && createdAt < now-1s && updatedAt < now-ackTimeoutMs
-     * - WsCron 调度间隔由配置控制：im.cron.scan-dropped.fixed-delay-ms（默认已调小，便于测试）
+     * - WsCron 调度间隔由配置控制：im.cron.resend.fixed-delay-ms（且需要显式开启 im.cron.resend.enabled=true）
      */
     private static Map<String, Object> scenarioCronResend(String tokenA, String tokenB) {
         Map<String, Object> r = new LinkedHashMap<>();

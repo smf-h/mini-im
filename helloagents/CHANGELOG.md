@@ -30,11 +30,20 @@
 - 用户：新增公开个人主页（点击头像进入），展示 `FriendCode`；支持重置（限频）
 - 好友：新增按 `FriendCode` 发送好友申请（替代直接输入 uid）
 - 群：新增 `GroupCode` 与“申请入群→群主/管理员审批”流程，并提供群资料页与成员管理（踢人/设管理员/转让群主）
+- 群：新增成员禁言（发言限制），支持预设时长（10m/1h/1d/永久/解除），WS `GROUP_CHAT` 入口强制校验并返回 `ERROR group_speak_muted`
+- 内容风控：新增违禁词替换（默认覆盖单聊/群聊/好友申请附言，命中替换为 `***`）
 - 后端：接入 Flyway（`src/main/resources/db/migration/*`），启动时自动迁移；对已有库使用 `baseline-version=0`
 - 配置：新增两份配置模板 `src/main/resources/application.env.yml`（仅变量）与 `src/main/resources/application.env.values.yml`（示例值）
 
 ### 修复
 - WS：允许 `/ws?token=...`（query token）握手，修复浏览器端连接卡住导致 `auth_timeout`
+- WS：避免重复 `AUTH` 导致重复离线补发（同一连接仅补发一次），补齐补发失败日志上下文；`WsCron` 调度间隔配置对齐为 `im.cron.resend.fixed-delay-ms` 并兼容旧 `im.cron.scan-dropped.fixed-delay-ms`
+- WS：补发逻辑抽离为 `WsResendService`，`WsFrameHandler/WsCron` 仅负责门禁与调度，减少重复代码
+- WS：`CALL_*` 信令处理抽离为 `WsCallHandler`（占用/超时/落库/转发），进一步瘦身 `WsFrameHandler`
+- WS：`ACK` 处理抽离为 `WsAckHandler`（送达/已读推进成员游标 + 回执给发送方）
+- WS：`FRIEND_REQUEST` 处理抽离为 `WsFriendRequestHandler`（幂等 claim + 落库 ACK(saved) + best-effort 推送）
+- WS：`SINGLE_CHAT/GROUP_CHAT` 处理分别抽离为 `WsSingleChatHandler` / `WsGroupChatHandler`，`WsFrameHandler` 仅做协议解析与分发
+- WS：进一步拆分 `WsWriter/WsAuthHandler/WsPingHandler`，统一写出与认证/心跳逻辑，`WsFrameHandler` 收敛为路由器
 - 前端：发送时若收到 `ERROR` 按 `clientMsgId` 展示失败原因
 - 后端：所有语义为 ID 的 `long/Long` 字段统一序列化为字符串，避免前端 UID/ID 精度丢失
 - Auth：修复 `/auth/login` 在 `passwordHash` 为空的历史用户场景下可能重复插入导致 500；补充异常日志与 Redis 不可用的明确错误信息
@@ -42,7 +51,10 @@
 - 前端：会话列表展示对方昵称/用户名，并在收到新消息时会话置顶+更新预览
 - 前端：整体切换为“微信绿白风格”主题（顶栏/按钮/卡片/聊天气泡/列表）
 - 前端：继续美化微信细节（聊天气泡尖角、列表动效、全局圆角/阴影/响应式）
+- 前端：单聊消息气泡尖角下移，更贴近头像位置
+- 前端：修复单聊通话记录弹窗模板标签缺失导致 `npm -C frontend run build` 失败
 - 单聊：会话未读数 + 消息已读/未读展示（WS `ACK(read)` 推进游标并回执给发送方）
+- 后端：`imDbExecutor` 标记为 `@Primary`，修复 Spring `Executor` 注入歧义（`imDbExecutor` vs `taskScheduler`）
 
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 

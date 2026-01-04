@@ -14,6 +14,12 @@
 - 表定义：`src/main/resources/db/schema-mysql.sql`
 - 实体包：`com.miniim.domain.entity`
 
+## 群成员状态约定（v1，以代码为准）
+- 表：`t_group_member`
+- 关键字段：
+  - `mute_until`：免打扰（仅屏蔽通知，不影响收发）
+  - `speak_mute_until`：禁言（发言限制；禁止发送群消息）
+
 ## 单聊消息状态约定（v1，以代码为准）
 - 表：`t_message`
 - 关键字段：
