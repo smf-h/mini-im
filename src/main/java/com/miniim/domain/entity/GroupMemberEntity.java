@@ -29,6 +29,9 @@ public class GroupMemberEntity {
 
     private LocalDateTime muteUntil;
 
+    /** 禁言截止时间：用于控制是否允许发送群消息；为空表示未禁言。 */
+    private LocalDateTime speakMuteUntil;
+
     private Long lastDeliveredMsgId;
 
     private Long lastReadMsgId;
