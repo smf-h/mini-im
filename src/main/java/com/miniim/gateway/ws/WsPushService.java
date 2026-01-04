@@ -1,9 +1,7 @@
 package com.miniim.gateway.ws;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -17,7 +15,7 @@ import java.util.List;
 public class WsPushService {
 
     private final SessionRegistry sessionRegistry;
-    private final ObjectMapper objectMapper;
+    private final WsWriter wsWriter;
 
     public void pushToUser(long userId, WsEnvelope envelope) {
         List<Channel> channels = sessionRegistry.getChannels(userId);
@@ -45,18 +43,10 @@ public class WsPushService {
         if (ch == null || !ch.isActive()) {
             return;
         }
-        try {
-            String json = objectMapper.writeValueAsString(envelope);
-            ch.eventLoop().execute(() -> {
-                try {
-                    ch.writeAndFlush(new TextWebSocketFrame(json));
-                } catch (Exception e) {
-                    log.debug("push failed: {}", e.toString());
-                }
-            });
-        } catch (Exception e) {
-            log.debug("push serialize failed: {}", e.toString());
-        }
+        wsWriter.write(ch, envelope).addListener(f -> {
+            if (!f.isSuccess()) {
+                log.debug("push failed: {}", f.cause() == null ? "unknown" : f.cause().toString());
+            }
+        });
     }
 }
-

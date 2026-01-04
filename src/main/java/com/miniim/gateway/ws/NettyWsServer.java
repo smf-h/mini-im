@@ -2,21 +2,7 @@ package com.miniim.gateway.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniim.auth.service.JwtService;
-import com.miniim.domain.entity.ConversationEntity;
-import com.miniim.domain.mapper.GroupMemberMapper;
-import com.miniim.domain.mapper.MessageMapper;
-import com.miniim.domain.mapper.MessageMentionMapper;
-import com.miniim.domain.service.CallRecordService;
-import com.miniim.domain.service.ConversationService;
-import com.miniim.domain.service.FriendRelationService;
-import com.miniim.domain.service.FriendRequestService;
-import com.miniim.domain.service.GroupService;
-import com.miniim.domain.service.MessageService;
-import com.miniim.domain.service.SingleChatMemberService;
-import com.miniim.domain.service.SingleChatService;
-import com.miniim.domain.service.UserService;
 import com.miniim.gateway.config.GatewayProperties;
-import com.miniim.gateway.session.CallRegistry;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -32,11 +18,9 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -48,21 +32,14 @@ public class NettyWsServer implements SmartLifecycle {
     private final ObjectMapper objectMapper;
     private final JwtService jwtService;
     private final SessionRegistry sessionRegistry;
-    private final MessageService messageService;
-    private final MessageMapper messageMapper;
-    private final FriendRequestService friendRequestService;
-    private final ConversationService conversationService;
-    private  final SingleChatService singleChatService;
-    private final SingleChatMemberService singleChatMemberService;
-    private final GroupMemberMapper groupMemberMapper;
-    private final MessageMentionMapper messageMentionMapper;
-    private final GroupService groupService;
-    private final Executor imDbExecutor;
-    private final ClientMsgIdIdempotency clientMsgIdIdempotency;
-    private final UserService userService;
-    private final CallRegistry callRegistry;
-    private final CallRecordService callRecordService;
-    private final FriendRelationService friendRelationService;
+    private final WsWriter wsWriter;
+    private final WsAuthHandler wsAuthHandler;
+    private final WsPingHandler wsPingHandler;
+    private final WsCallHandler wsCallHandler;
+    private final WsAckHandler wsAckHandler;
+    private final WsFriendRequestHandler wsFriendRequestHandler;
+    private final WsSingleChatHandler wsSingleChatHandler;
+    private final WsGroupChatHandler wsGroupChatHandler;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -73,40 +50,26 @@ public class NettyWsServer implements SmartLifecycle {
                          ObjectMapper objectMapper,
                          JwtService jwtService,
                          SessionRegistry sessionRegistry,
-                         MessageService messageService,
-                         MessageMapper messageMapper,
-                         FriendRequestService friendRequestService,
-                         ConversationService conversationService,
-                         SingleChatService singleChatService,
-                         SingleChatMemberService singleChatMemberService,
-                         GroupMemberMapper groupMemberMapper,
-                         MessageMentionMapper messageMentionMapper,
-                         GroupService groupService,
-                         @Qualifier("imDbExecutor") Executor imDbExecutor,
-                         ClientMsgIdIdempotency clientMsgIdIdempotency,
-                         UserService userService,
-                         CallRegistry callRegistry,
-                         CallRecordService callRecordService,
-                         FriendRelationService friendRelationService) {
+                         WsWriter wsWriter,
+                         WsAuthHandler wsAuthHandler,
+                         WsPingHandler wsPingHandler,
+                         WsCallHandler wsCallHandler,
+                         WsAckHandler wsAckHandler,
+                         WsFriendRequestHandler wsFriendRequestHandler,
+                         WsSingleChatHandler wsSingleChatHandler,
+                         WsGroupChatHandler wsGroupChatHandler) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
         this.sessionRegistry = sessionRegistry;
-        this.messageService = messageService;
-        this.messageMapper = messageMapper;
-        this.friendRequestService = friendRequestService;
-        this.conversationService = conversationService;
-        this.singleChatService = singleChatService;
-        this.singleChatMemberService = singleChatMemberService;
-        this.groupMemberMapper = groupMemberMapper;
-        this.messageMentionMapper = messageMentionMapper;
-        this.groupService = groupService;
-        this.imDbExecutor = imDbExecutor;
-        this.clientMsgIdIdempotency = clientMsgIdIdempotency;
-        this.userService = userService;
-        this.callRegistry = callRegistry;
-        this.callRecordService = callRecordService;
-        this.friendRelationService = friendRelationService;
+        this.wsWriter = wsWriter;
+        this.wsAuthHandler = wsAuthHandler;
+        this.wsPingHandler = wsPingHandler;
+        this.wsCallHandler = wsCallHandler;
+        this.wsAckHandler = wsAckHandler;
+        this.wsFriendRequestHandler = wsFriendRequestHandler;
+        this.wsSingleChatHandler = wsSingleChatHandler;
+        this.wsGroupChatHandler = wsGroupChatHandler;
     }
 
     @Override
@@ -160,23 +123,15 @@ public class NettyWsServer implements SmartLifecycle {
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
                         p.addLast(new WsFrameHandler(
                                 objectMapper,
-                                jwtService,
                                 sessionRegistry,
-                                messageService,
-                                messageMapper,
-                                friendRequestService,
-                                conversationService,
-                                singleChatService,
-                                singleChatMemberService,
-                                groupMemberMapper,
-                                messageMentionMapper,
-                                groupService,
-                                imDbExecutor,
-                                clientMsgIdIdempotency,
-                                userService,
-                                callRegistry,
-                                callRecordService,
-                                friendRelationService
+                                wsWriter,
+                                wsAuthHandler,
+                                wsPingHandler,
+                                wsCallHandler,
+                                wsAckHandler,
+                                wsFriendRequestHandler,
+                                wsSingleChatHandler,
+                                wsGroupChatHandler
                         ));
                     }
                 }
