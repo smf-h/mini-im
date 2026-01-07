@@ -1,4 +1,4 @@
-package com.miniim.domain.service.impl;
+﻿package com.miniim.domain.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -42,7 +42,7 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
         try {
             this.save(member);
         } catch (DuplicateKeyException ignore) {
-            // 并发创建：忽略即可
+            // 幂等：并发/重复插入可能触发唯一键冲突，忽略即可
         }
     }
 

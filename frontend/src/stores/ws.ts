@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { WS_URL } from '../config'
 import type { WsEnvelope } from '../types/ws'
 import { useAuthStore } from './auth'
+import { router } from '../router'
 
 type WsState = 'idle' | 'connecting' | 'open' | 'closed'
 type Waiter = { resolve: () => void; reject: (e: unknown) => void; timeoutId: number }
@@ -44,6 +45,16 @@ export const useWsStore = defineStore('ws', () => {
       // ignore
     }
     socket = null
+  }
+
+  function gotoLogin() {
+    try {
+      if (router.currentRoute.value.path !== '/login') {
+        void router.push('/login')
+      }
+    } catch {
+      // ignore
+    }
   }
 
   function flushWaiters(err: unknown) {
@@ -152,6 +163,12 @@ export const useWsStore = defineStore('ws', () => {
           if (parsed.type === 'AUTH_FAIL') {
             lastError.value = parsed.reason ?? 'auth_fail'
             flushWaiters(new Error(lastError.value))
+            if (parsed.reason === 'session_invalid' || parsed.reason === 'invalid_token') {
+              auth.clear()
+              close()
+              gotoLogin()
+              return
+            }
             try {
               socket?.close()
             } catch {
@@ -161,6 +178,11 @@ export const useWsStore = defineStore('ws', () => {
           if (parsed.type === 'ERROR' && parsed.reason === 'token_expired') {
             flushWaiters(new Error('token_expired'))
             void handleTokenExpired()
+          }
+          if (parsed.type === 'ERROR' && (parsed.reason === 'kicked' || parsed.reason === 'session_invalid')) {
+            auth.clear()
+            close()
+            gotoLogin()
           }
         } catch {
           // ignore
@@ -209,6 +231,7 @@ export const useWsStore = defineStore('ws', () => {
     } catch {
       auth.clear()
       close()
+      gotoLogin()
     }
   }
 

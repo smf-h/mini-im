@@ -313,6 +313,20 @@ onUnmounted(() => {
         <button
           class="navIcon"
           type="button"
+          :data-active="route.path.startsWith('/moments')"
+          aria-label="朋友圈"
+          @click="go('/moments')"
+        >
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2.75c2.32 0 4.21 1.89 4.21 4.21 0 2.32-1.89 4.21-4.21 4.21S7.79 9.28 7.79 6.96C7.79 4.64 9.68 2.75 12 2.75Zm0 10.5c4.85 0 8.75 2.14 8.75 4.95v.55c0 1.38-1.12 2.5-2.5 2.5H5.75a2.5 2.5 0 0 1-2.5-2.5v-.55c0-2.81 3.9-4.95 8.75-4.95Z"
+            />
+          </svg>
+        </button>
+        <button
+          class="navIcon"
+          type="button"
           :data-active="route.path.startsWith('/settings')"
           aria-label="设置"
           @click="go('/settings')"

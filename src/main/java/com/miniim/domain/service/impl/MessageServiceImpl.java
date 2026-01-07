@@ -71,6 +71,35 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity
     }
 
     @Override
+    public List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceId) {
+        if (groupId == null || groupId <= 0) {
+            return List.of();
+        }
+
+        int safeLimit = 50;
+        if (limit != null) {
+            long raw = limit;
+            if (raw < 1) {
+                raw = 1;
+            }
+            if (raw > 200) {
+                raw = 200;
+            }
+            safeLimit = (int) raw;
+        }
+
+        LambdaQueryWrapper<MessageEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(MessageEntity::getGroupId, groupId)
+                .eq(MessageEntity::getChatType, com.miniim.domain.enums.ChatType.GROUP);
+        if (sinceId != null) {
+            wrapper.gt(MessageEntity::getId, sinceId);
+        }
+        wrapper.orderByAsc(MessageEntity::getId);
+        wrapper.last("limit " + safeLimit);
+        return this.list(wrapper);
+    }
+
+    @Override
     public Page<MessageEntity> pageBySingleChatId(Long singleChatId, Long pageNo, Long pageSize) {
         if (singleChatId == null || singleChatId <= 0) {
             return new Page<>(1, 0);

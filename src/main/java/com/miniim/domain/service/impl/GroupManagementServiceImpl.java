@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.miniim.domain.entity.GroupEntity;
 import com.miniim.domain.entity.GroupMemberEntity;
 import com.miniim.domain.entity.UserEntity;
+import com.miniim.domain.cache.GroupBaseCache;
+import com.miniim.domain.cache.GroupMemberIdsCache;
 import com.miniim.domain.enums.MemberRole;
 import com.miniim.domain.mapper.GroupMapper;
 import com.miniim.domain.mapper.GroupMemberMapper;
@@ -32,6 +34,8 @@ public class GroupManagementServiceImpl implements GroupManagementService {
     private final GroupMemberMapper groupMemberMapper;
     private final UserMapper userMapper;
     private final CodeService codeService;
+    private final GroupBaseCache groupBaseCache;
+    private final GroupMemberIdsCache groupMemberIdsCache;
 
     @Override
     public GroupProfile profileById(long requesterId, long groupId) {
@@ -41,26 +45,41 @@ public class GroupManagementServiceImpl implements GroupManagementService {
         if (groupId <= 0) {
             throw new IllegalArgumentException("bad_group_id");
         }
-        GroupEntity g = groupMapper.selectById(groupId);
-        if (g == null) {
-            throw new IllegalArgumentException("not_found");
+        GroupBaseCache.Value base = groupBaseCache.get(groupId);
+        if (base == null) {
+            base = loadGroupBase(groupId);
+            if (base == null) {
+                throw new IllegalArgumentException("not_found");
+            }
+            groupBaseCache.put(groupId, base);
+        } else if (base.groupCode() == null || base.groupCode().isBlank()) {
+            GroupEntity ensured = codeService.ensureGroupCode(groupId);
+            if (ensured != null && ensured.getGroupCode() != null && !ensured.getGroupCode().isBlank()) {
+                base = new GroupBaseCache.Value(
+                        base.groupId(),
+                        base.name(),
+                        base.avatarUrl(),
+                        ensured.getGroupCode(),
+                        base.createdBy(),
+                        base.createdAt(),
+                        base.updatedAt(),
+                        base.memberCount()
+                );
+                groupBaseCache.put(groupId, base);
+            }
         }
-        g = codeService.ensureGroupCode(groupId);
 
         MemberRole myRole = getRole(groupId, requesterId);
         boolean isMember = myRole != null;
-        long memberCount = groupMemberMapper.selectCount(new LambdaQueryWrapper<GroupMemberEntity>()
-                .eq(GroupMemberEntity::getGroupId, groupId));
-
         return new GroupProfile(
-                g.getId(),
-                g.getName(),
-                g.getAvatarUrl(),
-                g.getGroupCode(),
-                g.getCreatedBy(),
-                g.getCreatedAt(),
-                g.getUpdatedAt(),
-                memberCount,
+                base.groupId(),
+                base.name(),
+                base.avatarUrl(),
+                base.groupCode(),
+                base.createdBy(),
+                base.createdAt(),
+                base.updatedAt(),
+                base.memberCount() == null ? 0 : base.memberCount(),
                 myRole,
                 isMember
         );
@@ -141,6 +160,26 @@ public class GroupManagementServiceImpl implements GroupManagementService {
         return out;
     }
 
+    private GroupBaseCache.Value loadGroupBase(long groupId) {
+        GroupEntity g = groupMapper.selectById(groupId);
+        if (g == null) {
+            return null;
+        }
+        g = codeService.ensureGroupCode(groupId);
+        long memberCount = groupMemberMapper.selectCount(new LambdaQueryWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId));
+        return new GroupBaseCache.Value(
+                g.getId(),
+                g.getName(),
+                g.getAvatarUrl(),
+                g.getGroupCode(),
+                g.getCreatedBy(),
+                g.getCreatedAt(),
+                g.getUpdatedAt(),
+                memberCount
+        );
+    }
+
     @Transactional
     @Override
     public void muteMember(long operatorId, long groupId, long targetUserId, long durationSeconds) {
@@ -198,6 +237,7 @@ public class GroupManagementServiceImpl implements GroupManagementService {
                 .eq(GroupMemberEntity::getUserId, targetUserId)
                 .set(GroupMemberEntity::getSpeakMuteUntil, muteUntil)
                 .set(GroupMemberEntity::getUpdatedAt, now));
+        groupBaseCache.evict(groupId);
     }
 
     @Transactional
@@ -219,6 +259,8 @@ public class GroupManagementServiceImpl implements GroupManagementService {
         groupMemberMapper.delete(new LambdaQueryWrapper<GroupMemberEntity>()
                 .eq(GroupMemberEntity::getGroupId, groupId)
                 .eq(GroupMemberEntity::getUserId, userId));
+        groupBaseCache.evict(groupId);
+        groupMemberIdsCache.evict(groupId);
     }
 
     @Transactional
@@ -259,6 +301,8 @@ public class GroupManagementServiceImpl implements GroupManagementService {
         groupMemberMapper.delete(new LambdaQueryWrapper<GroupMemberEntity>()
                 .eq(GroupMemberEntity::getGroupId, groupId)
                 .eq(GroupMemberEntity::getUserId, targetUserId));
+        groupBaseCache.evict(groupId);
+        groupMemberIdsCache.evict(groupId);
     }
 
     @Transactional
@@ -292,6 +336,7 @@ public class GroupManagementServiceImpl implements GroupManagementService {
                 .eq(GroupMemberEntity::getUserId, targetUserId)
                 .set(GroupMemberEntity::getRole, newRole)
                 .set(GroupMemberEntity::getUpdatedAt, LocalDateTime.now()));
+        groupBaseCache.evict(groupId);
     }
 
     @Transactional
@@ -330,6 +375,7 @@ public class GroupManagementServiceImpl implements GroupManagementService {
                 .eq(GroupMemberEntity::getUserId, newOwnerUserId)
                 .set(GroupMemberEntity::getRole, MemberRole.OWNER)
                 .set(GroupMemberEntity::getUpdatedAt, now));
+        groupBaseCache.evict(groupId);
     }
 
     @Transactional
@@ -347,6 +393,7 @@ public class GroupManagementServiceImpl implements GroupManagementService {
         }
         LocalDateTime now = LocalDateTime.now();
         String code = codeService.resetGroupCode(groupId, now);
+        groupBaseCache.evict(groupId);
         GroupEntity g = groupMapper.selectById(groupId);
         LocalDateTime updatedAt = g == null ? null : g.getGroupCodeUpdatedAt();
         return new ResetGroupCodeResult(code, updatedAt, codeService.nextResetAt(updatedAt));

@@ -8,6 +8,7 @@ import com.miniim.common.api.Result;
 import com.miniim.domain.dto.SingleChatConversationDto;
 import com.miniim.domain.entity.MessageEntity;
 import com.miniim.domain.entity.SingleChatEntity;
+import com.miniim.domain.enums.MessageStatus;
 import com.miniim.domain.mapper.MessageMapper;
 import com.miniim.domain.mapper.SingleChatMemberMapper;
 import com.miniim.domain.service.SingleChatMemberService;
@@ -176,7 +177,7 @@ public class SingleChatConversationController {
                 lm.setServerMsgId(last.getServerMsgId());
                 lm.setFromUserId(last.getFromUserId());
                 lm.setToUserId(last.getToUserId());
-                lm.setContent(last.getContent());
+                lm.setContent(last.getStatus() == MessageStatus.REVOKED ? MessageEntity.REVOKED_PLACEHOLDER : last.getContent());
                 lm.setCreatedAt(last.getCreatedAt());
                 dto.setLastMessage(lm);
             }

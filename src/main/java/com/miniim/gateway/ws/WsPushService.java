@@ -1,6 +1,8 @@
 package com.miniim.gateway.ws;
 
 import com.miniim.gateway.session.SessionRegistry;
+import com.miniim.gateway.session.WsRouteStore;
+import com.miniim.gateway.ws.cluster.WsClusterBus;
 import io.netty.channel.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,16 +17,36 @@ import java.util.List;
 public class WsPushService {
 
     private final SessionRegistry sessionRegistry;
+    private final WsRouteStore routeStore;
+    private final WsClusterBus clusterBus;
     private final WsWriter wsWriter;
 
     public void pushToUser(long userId, WsEnvelope envelope) {
-        List<Channel> channels = sessionRegistry.getChannels(userId);
-        if (channels == null || channels.isEmpty()) {
+        boolean anyLocal = pushToUserLocalOnly(userId, envelope);
+        if (anyLocal) {
             return;
         }
-        for (Channel ch : channels) {
-            pushToChannel(ch, envelope);
+
+        WsRouteStore.RouteInfo route = routeStore.get(userId);
+        if (route == null || route.serverId() == null || route.serverId().isBlank()) {
+            return;
         }
+        if (routeStore.serverId().equals(route.serverId())) {
+            return;
+        }
+        clusterBus.publishPush(route.serverId(), userId, envelope);
+    }
+
+    public boolean pushToUserLocalOnly(long userId, WsEnvelope envelope) {
+        List<Channel> channels = sessionRegistry.getChannels(userId);
+        if (channels == null || channels.isEmpty()) {
+            return false;
+        }
+        boolean pushed = false;
+        for (Channel ch : channels) {
+            pushed |= pushToChannel(ch, envelope);
+        }
+        return pushed;
     }
 
     public void pushToUsers(Collection<Long> userIds, WsEnvelope envelope) {
@@ -39,14 +61,15 @@ public class WsPushService {
         }
     }
 
-    private void pushToChannel(Channel ch, WsEnvelope envelope) {
+    private boolean pushToChannel(Channel ch, WsEnvelope envelope) {
         if (ch == null || !ch.isActive()) {
-            return;
+            return false;
         }
         wsWriter.write(ch, envelope).addListener(f -> {
             if (!f.isSuccess()) {
                 log.debug("push failed: {}", f.cause() == null ? "unknown" : f.cause().toString());
             }
         });
+        return true;
     }
 }

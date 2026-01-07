@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -41,6 +42,7 @@ public class WsSingleChatHandler {
     private final SingleChatService singleChatService;
     private final SingleChatMemberService singleChatMemberService;
     private final ForbiddenWordFilter forbiddenWordFilter;
+    private final WsPushService wsPushService;
     private final WsWriter wsWriter;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
@@ -52,19 +54,23 @@ public class WsSingleChatHandler {
             wsWriter.writeError(ctx, "unauthorized", msg.getClientMsgId(), null);
             return;
         }
+        WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId));
+    }
+
+    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId) {
+        CompletableFuture<Void> done = new CompletableFuture<>();
+
         if (!validate(ctx, msg)) {
-            wsWriter.writeError(ctx, "invalid_single_chat", msg.getClientMsgId(), null);
-            return;
+            done.complete(null);
+            return done;
         }
 
         Long toUserId = msg.getTo();
         if (toUserId.equals(fromUserId)) {
-            wsWriter.writeError(ctx, "cannot_send_to_self", msg.getClientMsgId(), null);
-            return;
+            ctx.executor().execute(() -> wsWriter.writeError(ctx, "cannot_send_to_self", msg.getClientMsgId(), null));
+            done.complete(null);
+            return done;
         }
-
-        List<Channel> channelsTo = sessionRegistry.getChannels(toUserId);
-        final boolean dropped = channelsTo.stream().noneMatch(ch -> ch != null && ch.isActive());
 
         final WsEnvelope base = BeanUtil.toBean(msg, WsEnvelope.class);
         base.setFrom(fromUserId);
@@ -75,15 +81,11 @@ public class WsSingleChatHandler {
         Long user2Id = Math.max(fromUserId, toUserId);
         Long messageId = IdWorker.getId();
         String serverMsgId = String.valueOf(messageId);
+        base.setServerMsgId(serverMsgId);
 
-        String key = idempotency.key(fromUserId.toString(), msg.getClientMsgId());
+        String idemKey = idempotency.key(fromUserId, "SINGLE_CHAT", msg.getClientMsgId());
         ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
         newClaim.setServerMsgId(serverMsgId);
-        ClientMsgIdIdempotency.Claim claim = idempotency.putIfAbsent(key, newClaim);
-        if (claim != null) {
-            wsWriter.writeAck(ctx, fromUserId, msg.getClientMsgId(), claim.getServerMsgId(), AckType.SAVED.getDesc(), null);
-            return;
-        }
 
         MessageEntity messageEntity = new MessageEntity();
         messageEntity.setId(messageId);
@@ -96,9 +98,14 @@ public class WsSingleChatHandler {
         messageEntity.setStatus(MessageStatus.SAVED);
         messageEntity.setContent(base.getBody());
         messageEntity.setClientMsgId(msg.getClientMsgId());
-        base.setServerMsgId(serverMsgId);
 
-        CompletableFuture<Long> saveFuture = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Boolean> saveFuture = CompletableFuture.supplyAsync(() -> {
+            ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idemKey, newClaim);
+            if (existed != null) {
+                ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, msg.getClientMsgId(), existed.getServerMsgId(), AckType.SAVED.getDesc(), null));
+                return false;
+            }
+
             Long singleChatId = singleChatService.getOrCreateSingleChatId(user1Id, user2Id);
             messageEntity.setSingleChatId(singleChatId);
             singleChatMemberService.ensureMembers(singleChatId, fromUserId, toUserId);
@@ -106,44 +113,35 @@ public class WsSingleChatHandler {
             singleChatService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.SingleChatEntity>()
                     .eq(com.miniim.domain.entity.SingleChatEntity::getId, singleChatId)
                     .set(com.miniim.domain.entity.SingleChatEntity::getUpdatedAt, LocalDateTime.now()));
-            return messageEntity.getId();
+            return true;
         }, dbExecutor).orTimeout(3, TimeUnit.SECONDS);
 
-        saveFuture.whenComplete((result, error) -> {
+        saveFuture.whenComplete((saved, error) -> {
             if (error != null) {
                 log.error("save message failed: {}", error.toString());
-                idempotency.remove(key);
+                try {
+                    idempotency.remove(idemKey);
+                } catch (Exception e) {
+                    log.debug("idem cleanup failed: key={}, err={}", idemKey, e.toString());
+                }
                 ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", msg.getClientMsgId(), serverMsgId));
+                done.complete(null);
+                return;
+            }
+            if (Boolean.FALSE.equals(saved)) {
+                done.complete(null);
                 return;
             }
 
             ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, base.getClientMsgId(), serverMsgId, AckType.SAVED.getDesc(), base.getBody()));
 
-            if (dropped) {
-                return;
-            }
-
-            for (Channel chTo : channelsTo) {
-                if (chTo == null || !chTo.isActive()) {
-                    continue;
-                }
-                ChannelFuture future;
-                try {
-                    WsEnvelope out = BeanUtil.toBean(base, WsEnvelope.class);
-                    out.setType("SINGLE_CHAT");
-                    future = wsWriter.write(chTo, out);
-                } catch (Exception e) {
-                    ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", base.getClientMsgId(), serverMsgId));
-                    continue;
-                }
-                future.addListener(f -> {
-                    if (!f.isSuccess()) {
-                        log.error("deliver message to user {} failed: {}", toUserId, f.cause() == null ? "unknown" : f.cause().toString());
-                        ctx.executor().execute(() -> wsWriter.writeError(ctx, "deliver_failed", base.getClientMsgId(), serverMsgId));
-                    }
-                });
-            }
+            WsEnvelope out = BeanUtil.toBean(base, WsEnvelope.class);
+            out.setType("SINGLE_CHAT");
+            wsPushService.pushToUser(toUserId, out);
+            done.complete(null);
         });
+
+        return done;
     }
 
     private boolean validate(ChannelHandlerContext ctx, WsEnvelope msg) {

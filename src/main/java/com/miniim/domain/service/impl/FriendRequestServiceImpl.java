@@ -136,7 +136,12 @@ public class FriendRequestServiceImpl extends ServiceImpl<FriendRequestMapper, F
             rel.setUser2Id(user2Id);
             friendRelationService.save(rel);
         } catch (DuplicateKeyException ignored) {
+            // 幂等：并发/重复 accept 可能触发唯一键冲突，视为已建立好友关系
         }
+
+        // 好友集合缓存：关系变更后主动失效（双方）
+        friendRelationService.evictFriendIdSet(user1Id);
+        friendRelationService.evictFriendIdSet(user2Id);
 
         // 2) 创建/获取单聊会话（幂等：内部会先查后插）
         return singleChatService.getOrCreateSingleChatId(user1Id, user2Id);

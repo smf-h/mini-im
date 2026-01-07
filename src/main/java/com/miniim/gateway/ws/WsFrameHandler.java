@@ -25,6 +25,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private final WsFriendRequestHandler wsFriendRequestHandler;
     private final WsSingleChatHandler wsSingleChatHandler;
     private final WsGroupChatHandler wsGroupChatHandler;
+    private final WsMessageRevokeHandler wsMessageRevokeHandler;
     public WsFrameHandler(ObjectMapper objectMapper,
                           SessionRegistry sessionRegistry,
                           WsWriter wsWriter,
@@ -34,7 +35,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                           WsAckHandler wsAckHandler,
                           WsFriendRequestHandler wsFriendRequestHandler,
                           WsSingleChatHandler wsSingleChatHandler,
-                          WsGroupChatHandler wsGroupChatHandler) {
+                          WsGroupChatHandler wsGroupChatHandler,
+                          WsMessageRevokeHandler wsMessageRevokeHandler) {
         this.objectMapper = objectMapper;
         this.sessionRegistry = sessionRegistry;
         this.wsWriter = wsWriter;
@@ -45,6 +47,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.wsFriendRequestHandler = wsFriendRequestHandler;
         this.wsSingleChatHandler = wsSingleChatHandler;
         this.wsGroupChatHandler = wsGroupChatHandler;
+        this.wsMessageRevokeHandler = wsMessageRevokeHandler;
     }
 
     @Override
@@ -101,6 +104,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             case "GROUP_CHAT" -> wsGroupChatHandler.handle(ctx, msg);
             case "FRIEND_REQUEST" -> wsFriendRequestHandler.handle(ctx, msg);
             case "ACK" -> wsAckHandler.handle(ctx, msg);
+            case "MESSAGE_REVOKE" -> wsMessageRevokeHandler.handle(ctx, msg);
             case "CALL_INVITE" -> wsCallHandler.handleInvite(ctx, msg);
             case "CALL_ACCEPT" -> wsCallHandler.handleAccept(ctx, msg);
             case "CALL_REJECT" -> wsCallHandler.handleReject(ctx, msg);

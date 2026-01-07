@@ -109,6 +109,37 @@ export type UserProfileDto = {
   friendCode?: string | null
 }
 
+export type MomentPostDto = {
+  id: Id
+  authorId: Id
+  content: string
+  likeCount: number
+  commentCount: number
+  likedByMe: boolean
+  createdAt: string
+}
+
+export type MomentCommentDto = {
+  id: Id
+  postId: Id
+  userId: Id
+  content: string
+  createdAt: string
+}
+
+export type CreateMomentPostResponse = {
+  postId: Id
+}
+
+export type ToggleMomentLikeResponse = {
+  liked: boolean
+  likeCount: number
+}
+
+export type CreateMomentCommentResponse = {
+  commentId: Id
+}
+
 export type MeProfileDto = {
   id: Id
   username: string

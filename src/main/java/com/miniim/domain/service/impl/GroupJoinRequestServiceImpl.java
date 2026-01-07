@@ -7,6 +7,8 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.miniim.domain.entity.GroupEntity;
 import com.miniim.domain.entity.GroupJoinRequestEntity;
 import com.miniim.domain.entity.GroupMemberEntity;
+import com.miniim.domain.cache.GroupBaseCache;
+import com.miniim.domain.cache.GroupMemberIdsCache;
 import com.miniim.domain.enums.GroupJoinRequestStatus;
 import com.miniim.domain.enums.MemberRole;
 import com.miniim.domain.mapper.GroupJoinRequestMapper;
@@ -30,6 +32,8 @@ public class GroupJoinRequestServiceImpl extends ServiceImpl<GroupJoinRequestMap
 
     private final GroupMapper groupMapper;
     private final GroupMemberMapper groupMemberMapper;
+    private final GroupBaseCache groupBaseCache;
+    private final GroupMemberIdsCache groupMemberIdsCache;
     private final WsPushService wsPushService;
 
     @Transactional
@@ -183,6 +187,8 @@ public class GroupJoinRequestServiceImpl extends ServiceImpl<GroupJoinRequestMap
                 m.setUpdatedAt(now);
                 groupMemberMapper.insert(m);
             }
+            groupBaseCache.evict(req.getGroupId());
+            groupMemberIdsCache.evict(req.getGroupId());
         }
 
         GroupJoinRequestEntity out = this.getById(requestId);

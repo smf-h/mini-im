@@ -74,6 +74,16 @@ public class WsWriter {
         return write(ctx, err);
     }
 
+    public ChannelFuture writeError(Channel ch, String reason, String clientMsgId, String serverMsgId) {
+        WsEnvelope err = new WsEnvelope();
+        err.type = "ERROR";
+        err.clientMsgId = clientMsgId;
+        err.serverMsgId = serverMsgId;
+        err.reason = reason;
+        err.ts = Instant.now().toEpochMilli();
+        return write(ch, err);
+    }
+
     public ChannelFuture writeAck(ChannelHandlerContext ctx, long fromUserId, String clientMsgId, String serverMsgId, String ackType, String body) {
         WsEnvelope ack = new WsEnvelope();
         ack.type = "ACK";
@@ -106,4 +116,3 @@ public class WsWriter {
         }
     }
 }
-

@@ -117,6 +117,19 @@ class FriendRequestServiceTest {
 *   新增场景需在 `WsSmokeTest.java` 中添加新的 `runScenario_XXX` 方法。
 *   保持脚本的幂等性（每次运行生成新的随机 ID 或清理数据）。
 
+### 4.4 多实例（WS 网关）手工验证
+用于验证：Redis 路由 SSOT、跨实例 `KICK/PUSH`、单端登录踢下线、`sessionVersion` 即时失效。
+
+1. 启动依赖：MySQL + Redis（本项目默认 `127.0.0.1:3306/mini_im`、`127.0.0.1:6379`）。
+2. 启动实例 A（示例）：
+   - `--server.port=8080 --im.gateway.ws.port=9001 --im.gateway.ws.instance-id=gw-a`
+3. 启动实例 B（示例）：
+   - `--server.port=8081 --im.gateway.ws.port=9002 --im.gateway.ws.instance-id=gw-b`
+4. 单端登录踢下线（同 userId）：
+   - 先用 token 连接到实例 A，再用同一账号连接到实例 B，实例 A 的连接应被 `KICK` 并断开。
+5. `sessionVersion` 即时失效：
+   - 使用旧 token（旧 `sv`）再次 AUTH/REAUTH，应返回 `UNAUTHORIZED invalid_token/session_invalid`（或 WS `AUTH_FAIL reason=session_invalid`）。
+
 ## 5. 测试数据管理
 
 *   **单元测试**: 使用 Mock 对象，不依赖真实数据。
@@ -142,3 +155,6 @@ class FriendRequestServiceTest {
     *   A: 纯 POJO 的 Getter/Setter 没有逻辑，测试价值低，浪费时间。
 *   **Q: 如何测试 WebSocket 的并发?**
     *   A: 单元测试难以模拟真实并发。建议使用 JMeter 或专门的压测工具（如 Gatling）进行性能/并发测试。
+
+*   **Q: 如何验证 HTTP 限流（429）是否生效？**
+    *   A: 对已接入 `@RateLimit` 的接口（如 `/auth/login`、`/friend/request/by-code`、`/group/create`）在窗口内超过阈值后应返回 HTTP 429，响应头包含 `Retry-After`（秒）。

@@ -3,6 +3,8 @@ package com.miniim.auth.web;
 import com.miniim.auth.dto.*;
 import com.miniim.auth.service.AuthService;
 import com.miniim.common.api.Result;
+import com.miniim.common.ratelimit.RateLimit;
+import com.miniim.common.ratelimit.RateLimitKey;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,6 +28,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
+    @RateLimit(name = "auth_login", windowSeconds = 60, max = 5, key = RateLimitKey.IP_USER)
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         // 登录成功会返回：userId + accessToken + refreshToken + 两者的 ttl（秒）
         return Result.ok(authService.login(request));

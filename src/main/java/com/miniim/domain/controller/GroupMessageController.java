@@ -50,4 +50,31 @@ public class GroupMessageController {
 
         return Result.ok(messageService.cursorByGroupId(groupId, limit, lastId));
     }
+
+    /**
+     * 增量拉取：返回 id > sinceId 的消息（按 id 升序）。sinceId 为空表示从 0 开始。
+     */
+    @GetMapping("/since")
+    public Result<List<MessageEntity>> since(
+            @RequestParam Long groupId,
+            @RequestParam(defaultValue = "50") Long limit,
+            @RequestParam(required = false) Long sinceId
+    ) {
+        Long userId = AuthContext.getUserId();
+        if (userId == null) {
+            return Result.fail(ApiCodes.UNAUTHORIZED, "unauthorized");
+        }
+        if (groupId == null || groupId <= 0) {
+            return Result.fail(ApiCodes.BAD_REQUEST, "missing_group_id");
+        }
+
+        long cnt = groupMemberService.count(new LambdaQueryWrapper<GroupMemberEntity>()
+                .eq(GroupMemberEntity::getGroupId, groupId)
+                .eq(GroupMemberEntity::getUserId, userId));
+        if (cnt <= 0) {
+            return Result.fail(ApiCodes.FORBIDDEN, "not_group_member");
+        }
+
+        return Result.ok(messageService.sinceByGroupId(groupId, limit, sinceId));
+    }
 }

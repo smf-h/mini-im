@@ -4,6 +4,7 @@ import { useAuthStore } from './stores/auth'
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/chats' },
   { path: '/login', component: () => import('./views/LoginView.vue') },
+  { path: '/moments', component: () => import('./views/MomentsView.vue') },
   {
     path: '/chats',
     component: () => import('./views/ChatsView.vue'),

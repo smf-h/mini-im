@@ -1,7 +1,10 @@
 package com.miniim.gateway.ws;
 
 import com.miniim.auth.service.JwtService;
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.session.SessionRegistry;
+import com.miniim.gateway.session.WsRouteStore;
+import com.miniim.gateway.ws.cluster.WsClusterBus;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.netty.buffer.Unpooled;
@@ -12,6 +15,7 @@ import io.netty.util.CharsetUtil;
 
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
 
 /**
  * WebSocket 握手阶段（HTTP Upgrade）鉴权：
@@ -25,12 +29,26 @@ public class WsHandshakeAuthHandler extends SimpleChannelInboundHandler<FullHttp
 
     private final String wsPath;
     private final JwtService jwtService;
+    private final SessionVersionStore sessionVersionStore;
     private final SessionRegistry sessionRegistry;
+    private final WsRouteStore routeStore;
+    private final WsClusterBus clusterBus;
+    private static final Duration ROUTE_TTL = Duration.ofSeconds(120);
 
-    public WsHandshakeAuthHandler(String wsPath, JwtService jwtService, SessionRegistry sessionRegistry) {
+    public WsHandshakeAuthHandler(
+            String wsPath,
+            JwtService jwtService,
+            SessionVersionStore sessionVersionStore,
+            SessionRegistry sessionRegistry,
+            WsRouteStore routeStore,
+            WsClusterBus clusterBus
+    ) {
         this.wsPath = wsPath;
         this.jwtService = jwtService;
+        this.sessionVersionStore = sessionVersionStore;
         this.sessionRegistry = sessionRegistry;
+        this.routeStore = routeStore;
+        this.clusterBus = clusterBus;
     }
 
     @Override
@@ -59,13 +77,41 @@ public class WsHandshakeAuthHandler extends SimpleChannelInboundHandler<FullHttp
             Claims claims = jws.getPayload();
 
             long userId = jwtService.getUserId(claims);
+            long sv = jwtService.getSessionVersion(claims);
+            if (!sessionVersionStore.isValid(userId, sv)) {
+                writeUnauthorizedAndClose(ctx, "session_invalid");
+                return;
+            }
             Long expMs = claims.getExpiration() == null ? null : claims.getExpiration().getTime();
 
             sessionRegistry.bind(ctx.channel(), userId, expMs);
+            afterAuthed(userId, ctx);
             ctx.fireChannelRead(req.retain());
         } catch (Exception e) {
             writeUnauthorizedAndClose(ctx, "invalid_access_token");
         }
+    }
+
+    private void afterAuthed(long userId, ChannelHandlerContext ctx) {
+        if (userId <= 0 || ctx == null || ctx.channel() == null) {
+            return;
+        }
+        String connId = ctx.channel().attr(SessionRegistry.ATTR_CONN_ID).get();
+        if (connId == null || connId.isBlank()) {
+            return;
+        }
+        WsRouteStore.RouteInfo old = routeStore.setAndGetOld(userId, connId, ROUTE_TTL);
+        sessionRegistry.closeOtherChannels(userId, ctx.channel());
+        if (old == null || old.serverId() == null || old.serverId().isBlank()) {
+            return;
+        }
+        if (routeStore.serverId().equals(old.serverId())) {
+            if (old.connId() != null && !old.connId().isBlank() && !connId.equals(old.connId())) {
+                sessionRegistry.closeByConnId(userId, old.connId());
+            }
+            return;
+        }
+        clusterBus.publishKick(old.serverId(), userId, old.connId(), "handshake_auth");
     }
 
     private String extractAccessToken(FullHttpRequest req) {

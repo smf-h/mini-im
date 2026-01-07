@@ -3,6 +3,8 @@ package com.miniim.domain.controller;
 import com.miniim.auth.web.AuthContext;
 import com.miniim.common.api.ApiCodes;
 import com.miniim.common.api.Result;
+import com.miniim.common.ratelimit.RateLimit;
+import com.miniim.common.ratelimit.RateLimitKey;
 import com.miniim.domain.entity.GroupEntity;
 import com.miniim.domain.entity.GroupMemberEntity;
 import com.miniim.domain.service.GroupService;
@@ -28,6 +30,7 @@ public class GroupController {
     private final GroupMemberService groupMemberService;
 
     @PostMapping("/create")
+    @RateLimit(name = "group_create", windowSeconds = 60, max = 1, key = RateLimitKey.USER)
     public Result<CreateGroupResponse> create(@RequestBody CreateGroupRequest req) {
         Long userId = AuthContext.getUserId();
         if (userId == null) {
@@ -82,7 +85,7 @@ public class GroupController {
                     parsed.add(id);
                 }
             } catch (NumberFormatException ignore) {
-                // ignore
+                // ids 参数中包含非数字项：跳过该项
             }
         }
         if (parsed.isEmpty()) {

@@ -10,6 +10,9 @@
 - 线程池：`com.miniim.config.ImExecutorsConfig`
 - 数据库迁移（Flyway）：`src/main/resources/db/migration/*` + `spring.flyway.*`（见 `src/main/resources/application.yml`）
 - 码生成配置（FriendCode/GroupCode）：`im.code.*`（见 `src/main/resources/application.yml`、`src/main/java/com/miniim/domain/config/CodeProperties.java`）
+- 缓存配置：`im.cache.*`（见 `src/main/resources/application.yml`、`com.miniim.common.cache.CacheProperties`）
+- 限流配置：`im.ratelimit.*`（见 `src/main/resources/application.yml`、`com.miniim.common.ratelimit.RateLimitProperties`）
+- 网关实例标识：`im.gateway.ws.instance-id`（可选；缺省为 `{host}:{port}:{random8}`）
 
 ## 配置模板（推荐）
 - 变量模板：`src/main/resources/application.env.yml`（仅参数变量，便于容器/CI 注入）

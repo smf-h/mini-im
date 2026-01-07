@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.miniim.common.content.ForbiddenWordFilter;
+import com.miniim.domain.cache.GroupMemberIdsCache;
 import com.miniim.domain.entity.GroupMemberEntity;
 import com.miniim.domain.entity.MessageEntity;
 import com.miniim.domain.entity.MessageMentionEntity;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -47,9 +49,12 @@ public class WsGroupChatHandler {
     private final ClientMsgIdIdempotency idempotency;
     private final MessageService messageService;
     private final GroupMemberMapper groupMemberMapper;
+    private final GroupMemberIdsCache groupMemberIdsCache;
     private final MessageMentionMapper messageMentionMapper;
     private final GroupService groupService;
     private final ForbiddenWordFilter forbiddenWordFilter;
+    private final WsPushService wsPushService;
+    private final GroupChatDispatchService groupChatDispatchService;
     private final WsWriter wsWriter;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
@@ -61,69 +66,78 @@ public class WsGroupChatHandler {
             wsWriter.writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
             return;
         }
+        WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId));
+    }
+
+    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId) {
+        CompletableFuture<Void> done = new CompletableFuture<>();
 
         if (!validate(ctx, msg)) {
-            return;
-        }
-
-        Long groupId = msg.getGroupId();
-        GroupMemberEntity myMember = groupMemberMapper.selectOne(new LambdaQueryWrapper<GroupMemberEntity>()
-                .eq(GroupMemberEntity::getGroupId, groupId)
-                .eq(GroupMemberEntity::getUserId, fromUserId)
-                .last("limit 1"));
-        if (myMember == null) {
-            wsWriter.writeError(ctx, "not_group_member", msg.getClientMsgId(), null);
-            return;
-        }
-
-        LocalDateTime speakMuteUntil = myMember.getSpeakMuteUntil();
-        if (speakMuteUntil != null && speakMuteUntil.isAfter(LocalDateTime.now())) {
-            wsWriter.writeError(ctx, "group_speak_muted", msg.getClientMsgId(), null);
-            return;
-        }
-
-        List<GroupMemberEntity> members = groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMemberEntity>()
-                .eq(GroupMemberEntity::getGroupId, groupId));
-        Set<Long> memberIds = new HashSet<>();
-        if (members != null) {
-            for (GroupMemberEntity m : members) {
-                if (m == null || m.getUserId() == null || m.getUserId() <= 0) {
-                    continue;
-                }
-                memberIds.add(m.getUserId());
-            }
+            done.complete(null);
+            return done;
         }
 
         final long ts = Instant.now().toEpochMilli();
-        Long messageId = IdWorker.getId();
-        String serverMsgId = String.valueOf(messageId);
+        final Long groupId = msg.getGroupId();
+        final Long messageId = IdWorker.getId();
+        final String serverMsgId = String.valueOf(messageId);
+        final String clientMsgId = msg.getClientMsgId();
+        final String idempotencyKey = idempotency.key(fromUserId, "GROUP_CHAT:" + groupId, clientMsgId);
+        final String sanitizedBody = forbiddenWordFilter.sanitize(msg.getBody());
 
-        String idempotencyKey = idempotency.key(fromUserId.toString(), "GROUP_CHAT:" + groupId + ":" + msg.getClientMsgId());
-        ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
-        newClaim.setServerMsgId(serverMsgId);
-        ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idempotencyKey, newClaim);
-        if (existed != null) {
-            wsWriter.writeAck(ctx, fromUserId, msg.getClientMsgId(), existed.getServerMsgId(), AckType.SAVED.getDesc(), null);
-            return;
-        }
+        CompletableFuture<Outcome> future = CompletableFuture.supplyAsync(() -> {
+            GroupMemberEntity myMember = groupMemberMapper.selectOne(new LambdaQueryWrapper<GroupMemberEntity>()
+                    .eq(GroupMemberEntity::getGroupId, groupId)
+                    .eq(GroupMemberEntity::getUserId, fromUserId)
+                    .last("limit 1"));
+            if (myMember == null) {
+                return Outcome.error("not_group_member");
+            }
 
-        String sanitizedBody = forbiddenWordFilter.sanitize(msg.getBody());
+            LocalDateTime speakMuteUntil = myMember.getSpeakMuteUntil();
+            if (speakMuteUntil != null && speakMuteUntil.isAfter(LocalDateTime.now())) {
+                return Outcome.error("group_speak_muted");
+            }
 
-        MessageEntity messageEntity = new MessageEntity();
-        messageEntity.setId(messageId);
-        messageEntity.setServerMsgId(serverMsgId);
-        messageEntity.setChatType(ChatType.GROUP);
-        messageEntity.setGroupId(groupId);
-        messageEntity.setFromUserId(fromUserId);
-        MessageType messageType = MessageType.fromString(msg.getMsgType());
-        messageEntity.setMsgType(messageType == null ? MessageType.TEXT : messageType);
-        messageEntity.setStatus(MessageStatus.SAVED);
-        messageEntity.setContent(sanitizedBody);
-        messageEntity.setClientMsgId(msg.getClientMsgId());
+            ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
+            newClaim.setServerMsgId(serverMsgId);
+            ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idempotencyKey, newClaim);
+            if (existed != null) {
+                return Outcome.duplicate(existed.getServerMsgId());
+            }
 
-        Map<Long, MentionType> importantTargets = resolveImportantTargets(msg, fromUserId, groupId, memberIds);
+            Set<Long> memberIds = groupMemberIdsCache.get(groupId);
+            if (memberIds == null) {
+                List<GroupMemberEntity> members = groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMemberEntity>()
+                        .eq(GroupMemberEntity::getGroupId, groupId));
+                memberIds = new HashSet<>();
+                if (members != null) {
+                    for (GroupMemberEntity m : members) {
+                        if (m == null || m.getUserId() == null || m.getUserId() <= 0) {
+                            continue;
+                        }
+                        memberIds.add(m.getUserId());
+                    }
+                }
+                if (!memberIds.isEmpty()) {
+                    groupMemberIdsCache.put(groupId, memberIds);
+                }
+            }
 
-        CompletableFuture<Void> saveFuture = CompletableFuture.runAsync(() -> {
+            MessageEntity messageEntity = new MessageEntity();
+            messageEntity.setId(messageId);
+            messageEntity.setServerMsgId(serverMsgId);
+            messageEntity.setChatType(ChatType.GROUP);
+            messageEntity.setGroupId(groupId);
+            messageEntity.setFromUserId(fromUserId);
+            MessageType messageType = MessageType.fromString(msg.getMsgType());
+            messageEntity.setMsgType(messageType == null ? MessageType.TEXT : messageType);
+            messageEntity.setStatus(MessageStatus.SAVED);
+            messageEntity.setContent(sanitizedBody);
+            messageEntity.setClientMsgId(clientMsgId);
+
+            Map<Long, MentionType> importantTargets = resolveImportantTargets(msg, fromUserId, groupId, memberIds);
+
             messageService.save(messageEntity);
             groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
                     .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
@@ -144,47 +158,114 @@ public class WsGroupChatHandler {
                 }
                 messageMentionMapper.insertBatch(rows);
             }
+            return Outcome.ok(memberIds, importantTargets);
         }, dbExecutor).orTimeout(3, TimeUnit.SECONDS);
 
-        saveFuture.whenComplete((v, error) -> {
+        future.whenComplete((out, error) -> {
             if (error != null) {
                 log.error("save group message failed: {}", error.toString());
-                idempotency.remove(idempotencyKey);
-                ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", msg.getClientMsgId(), serverMsgId));
+                try {
+                    idempotency.remove(idempotencyKey);
+                } catch (Exception e) {
+                    log.debug("idem cleanup failed: key={}, err={}", idempotencyKey, e.toString());
+                }
+                ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", clientMsgId, serverMsgId));
+                done.complete(null);
+                return;
+            }
+            if (out == null) {
+                ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", clientMsgId, serverMsgId));
+                done.complete(null);
+                return;
+            }
+            if (out.reason != null) {
+                ctx.executor().execute(() -> wsWriter.writeError(ctx, out.reason, clientMsgId, null));
+                done.complete(null);
+                return;
+            }
+            if (out.duplicateServerMsgId != null) {
+                ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, clientMsgId, out.duplicateServerMsgId, AckType.SAVED.getDesc(), null));
+                done.complete(null);
                 return;
             }
 
-            ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, msg.getClientMsgId(), serverMsgId, AckType.SAVED.getDesc(), sanitizedBody));
+            ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, clientMsgId, serverMsgId, AckType.SAVED.getDesc(), sanitizedBody));
 
-            for (Long uid : memberIds) {
-                List<Channel> channels = sessionRegistry.getChannels(uid);
-                if (channels == null || channels.isEmpty()) {
-                    continue;
-                }
-                boolean important = importantTargets.containsKey(uid);
-                for (Channel ch : channels) {
-                    if (ch == null || !ch.isActive()) {
-                        continue;
-                    }
-                    if (uid.equals(fromUserId) && ch == channel) {
-                        continue;
-                    }
-                    WsEnvelope out = new WsEnvelope();
-                    out.type = "GROUP_CHAT";
-                    out.from = fromUserId;
-                    out.groupId = groupId;
-                    out.clientMsgId = msg.getClientMsgId();
-                    out.serverMsgId = serverMsgId;
-                    out.msgType = msg.getMsgType();
-                    out.body = sanitizedBody;
-                    out.ts = ts;
-                    if (important) {
-                        out.important = true;
-                    }
-                    wsWriter.write(ch, out);
-                }
-            }
+            WsEnvelope normal = new WsEnvelope();
+            normal.type = "GROUP_CHAT";
+            normal.from = fromUserId;
+            normal.groupId = groupId;
+            normal.clientMsgId = clientMsgId;
+            normal.serverMsgId = serverMsgId;
+            normal.msgType = msg.getMsgType();
+            normal.body = sanitizedBody;
+            normal.ts = ts;
+
+            WsEnvelope important = new WsEnvelope();
+            important.type = normal.type;
+            important.from = normal.from;
+            important.groupId = normal.groupId;
+            important.clientMsgId = normal.clientMsgId;
+            important.serverMsgId = normal.serverMsgId;
+            important.msgType = normal.msgType;
+            important.body = normal.body;
+            important.ts = normal.ts;
+            important.important = true;
+
+            WsEnvelope normalNotify = new WsEnvelope();
+            normalNotify.type = "GROUP_NOTIFY";
+            normalNotify.from = fromUserId;
+            normalNotify.groupId = groupId;
+            normalNotify.serverMsgId = serverMsgId;
+            normalNotify.ts = ts;
+
+            WsEnvelope importantNotify = new WsEnvelope();
+            importantNotify.type = normalNotify.type;
+            importantNotify.from = normalNotify.from;
+            importantNotify.groupId = normalNotify.groupId;
+            importantNotify.serverMsgId = normalNotify.serverMsgId;
+            importantNotify.ts = normalNotify.ts;
+            importantNotify.important = true;
+
+            groupChatDispatchService.dispatch(
+                    out.memberIds,
+                    fromUserId,
+                    out.importantTargets.keySet(),
+                    normal,
+                    important,
+                    normalNotify,
+                    importantNotify
+            );
+            done.complete(null);
         });
+
+        return done;
+    }
+
+    private static class Outcome {
+        final Set<Long> memberIds;
+        final Map<Long, MentionType> importantTargets;
+        final String duplicateServerMsgId;
+        final String reason;
+
+        private Outcome(Set<Long> memberIds, Map<Long, MentionType> importantTargets, String duplicateServerMsgId, String reason) {
+            this.memberIds = memberIds == null ? Set.of() : memberIds;
+            this.importantTargets = importantTargets == null ? Map.of() : importantTargets;
+            this.duplicateServerMsgId = duplicateServerMsgId;
+            this.reason = reason;
+        }
+
+        static Outcome ok(Set<Long> memberIds, Map<Long, MentionType> importantTargets) {
+            return new Outcome(memberIds, importantTargets, null, null);
+        }
+
+        static Outcome duplicate(String serverMsgId) {
+            return new Outcome(Set.of(), Map.of(), serverMsgId, null);
+        }
+
+        static Outcome error(String reason) {
+            return new Outcome(Set.of(), Map.of(), null, reason);
+        }
     }
 
     private Map<Long, MentionType> resolveImportantTargets(WsEnvelope msg, Long fromUserId, Long groupId, Set<Long> memberIds) {

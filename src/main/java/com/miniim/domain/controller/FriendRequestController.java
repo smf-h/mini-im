@@ -5,6 +5,8 @@ import com.miniim.auth.web.AuthContext;
 import com.miniim.common.api.Result;
 import com.miniim.common.api.ApiCodes;
 import com.miniim.common.content.ForbiddenWordFilter;
+import com.miniim.common.ratelimit.RateLimit;
+import com.miniim.common.ratelimit.RateLimitKey;
 import com.miniim.domain.entity.FriendRequestEntity;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.enums.FriendRequestStatus;
@@ -127,6 +129,7 @@ public class FriendRequestController {
 
     @Transactional
     @PostMapping("/by-code")
+    @RateLimit(name = "friend_request_create", windowSeconds = 60, max = 3, key = RateLimitKey.USER)
     public Result<CreateByCodeResponse> createByCode(@RequestBody CreateByCodeRequest request) {
         Long fromUserId = AuthContext.getUserId();
         if (fromUserId == null) {

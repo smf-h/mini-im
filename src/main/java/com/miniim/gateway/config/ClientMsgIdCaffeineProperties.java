@@ -14,8 +14,8 @@ public class ClientMsgIdCaffeineProperties {
     /** Caffeine 最大条目数。 */
     private long maximumSize = 1000;
 
-    /** 访问后过期（秒）。 */
-    private long expireAfterAccessSeconds = 600;
+    /** 过期（秒）。 */
+    private long expireAfterAccessSeconds = 1800;
 
     public boolean isEnabled() {
         return enabled;

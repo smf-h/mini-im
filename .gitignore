@@ -8,6 +8,7 @@ logs/
 # Local agent/run artifacts
 .codex-run/
 scripts/ws-smoke-test/.out/
+scripts/ws-cluster-smoke-test/.out/
 
 # Frontend (Vue)
 frontend/node_modules/
@@ -39,6 +40,10 @@ Thumbs.db
 # Env
 .env
 .env.*
+
+# WeChat Mini Program
+miniprogram/project.private.config.json
+miniprogram/miniprogram/
 
 # JVM crash logs
 hs_err_pid*

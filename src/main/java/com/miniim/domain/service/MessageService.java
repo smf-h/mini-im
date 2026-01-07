@@ -19,6 +19,11 @@ public interface MessageService extends IService<MessageEntity> {
     List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastId);
 
     /**
+     * 增量拉取：返回 id > sinceId 的消息（按 id 升序）。
+     */
+    List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceId);
+
+    /**
      * 普通分页：按 pageNo/pageSize 返回 Page 对象。
      */
     com.baomidou.mybatisplus.extension.plugins.pagination.Page<MessageEntity> pageBySingleChatId(Long singleChatId, Long pageNo, Long pageSize);

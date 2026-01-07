@@ -10,6 +10,7 @@ import com.miniim.domain.service.CallRecordService;
 import com.miniim.domain.service.FriendRelationService;
 import com.miniim.gateway.session.CallRegistry;
 import com.miniim.gateway.session.SessionRegistry;
+import com.miniim.gateway.session.WsRouteStore;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
@@ -46,9 +47,11 @@ public class WsCallHandler {
     private static final int CALL_RING_TIMEOUT_SEC = 30;
 
     private final SessionRegistry sessionRegistry;
+    private final WsRouteStore routeStore;
     private final CallRegistry callRegistry;
     private final CallRecordService callRecordService;
     private final FriendRelationService friendRelationService;
+    private final WsPushService wsPushService;
     private final WsWriter wsWriter;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
@@ -89,6 +92,10 @@ public class WsCallHandler {
 
         List<Channel> calleeChannels = sessionRegistry.getChannels(calleeUserId);
         boolean calleeOnline = calleeChannels != null && calleeChannels.stream().anyMatch(ch -> ch != null && ch.isActive());
+        if (!calleeOnline) {
+            WsRouteStore.RouteInfo route = routeStore.get(calleeUserId);
+            calleeOnline = route != null && route.serverId() != null && !route.serverId().isBlank();
+        }
         if (!calleeOnline) {
             long callId = IdWorker.getId();
             persistCallFailed(callId, callerUserId, calleeUserId, "offline");
@@ -511,16 +518,7 @@ public class WsCallHandler {
     }
 
     private void forwardToUser(long userId, WsEnvelope env) {
-        List<Channel> channels = sessionRegistry.getChannels(userId);
-        if (channels == null || channels.isEmpty()) {
-            return;
-        }
-        for (Channel ch : channels) {
-            if (ch == null || !ch.isActive()) {
-                continue;
-            }
-            wsWriter.write(ch, env);
-        }
+        wsPushService.pushToUser(userId, env);
     }
 
     private void persistCallFailed(long callId, long callerUserId, long calleeUserId, String failReason) {

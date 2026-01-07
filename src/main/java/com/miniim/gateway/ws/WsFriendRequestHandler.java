@@ -28,6 +28,7 @@ public class WsFriendRequestHandler {
     private final ClientMsgIdIdempotency idempotency;
     private final FriendRequestService friendRequestService;
     private final ForbiddenWordFilter forbiddenWordFilter;
+    private final WsPushService wsPushService;
     private final WsWriter wsWriter;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
@@ -46,7 +47,7 @@ public class WsFriendRequestHandler {
         Long toUserId = msg.getTo();
         String clientMsgId = msg.getClientMsgId();
 
-        String key = idempotency.key(fromUserId.toString(), "FRIEND_REQUEST:" + clientMsgId);
+        String key = idempotency.key(fromUserId, "FRIEND_REQUEST", clientMsgId);
         ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
         String requestId = String.valueOf(IdWorker.getId());
         newClaim.setServerMsgId(requestId);
@@ -86,12 +87,7 @@ public class WsFriendRequestHandler {
             out.setServerMsgId(requestId);
             out.setBody(sanitizedBody);
             out.setTs(Instant.now().toEpochMilli());
-            for (Channel chTo : sessionRegistry.getChannels(toUserId)) {
-                if (chTo == null || !chTo.isActive()) {
-                    continue;
-                }
-                wsWriter.write(chTo, out);
-            }
+            wsPushService.pushToUser(toUserId, out);
         });
     }
 

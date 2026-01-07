@@ -1,7 +1,10 @@
 package com.miniim.gateway.ws;
 
 import com.miniim.auth.service.JwtService;
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.session.SessionRegistry;
+import com.miniim.gateway.session.WsRouteStore;
+import com.miniim.gateway.ws.cluster.WsClusterBus;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.AttributeKey;
@@ -10,6 +13,8 @@ import io.jsonwebtoken.Jws;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 /**
  * WS 认证处理：
@@ -22,9 +27,13 @@ import org.springframework.stereotype.Component;
 public class WsAuthHandler {
 
     private static final AttributeKey<Boolean> ATTR_RESEND_AFTER_AUTH_DONE = AttributeKey.valueOf("im_resend_after_auth_done");
+    private static final Duration ROUTE_TTL = Duration.ofSeconds(120);
 
     private final JwtService jwtService;
+    private final SessionVersionStore sessionVersionStore;
     private final SessionRegistry sessionRegistry;
+    private final WsRouteStore routeStore;
+    private final WsClusterBus clusterBus;
     private final WsResendService wsResendService;
     private final WsWriter wsWriter;
 
@@ -34,6 +43,9 @@ public class WsAuthHandler {
         if (sessionRegistry.isAuthed(ch)) {
             Long uid = ch.attr(SessionRegistry.ATTR_USER_ID).get();
             wsWriter.write(ctx, authOk(uid == null ? -1 : uid));
+            if (uid != null) {
+                afterAuthed(uid, ch, "auth_already_authed");
+            }
             if (uid != null && markResendAfterAuthOnce(ch)) {
                 wsResendService.resendForChannelAsync(ch, uid, "auth_already_authed");
             }
@@ -50,6 +62,12 @@ public class WsAuthHandler {
         try {
             Jws<Claims> jws = jwtService.parseAccessToken(msg.token);
             userId = jwtService.getUserId(jws.getPayload());
+            long sv = jwtService.getSessionVersion(jws.getPayload());
+            if (!sessionVersionStore.isValid(userId, sv)) {
+                wsWriter.write(ctx, authFail("session_invalid"));
+                ctx.close();
+                return;
+            }
             Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
             sessionRegistry.bind(ch, userId, expMs);
             wsWriter.write(ctx, authOk(userId));
@@ -59,6 +77,7 @@ public class WsAuthHandler {
             return;
         }
 
+        afterAuthed(userId, ch, "auth");
         if (markResendAfterAuthOnce(ch)) {
             wsResendService.resendForChannelAsync(ch, userId, "auth");
         }
@@ -96,6 +115,12 @@ public class WsAuthHandler {
                 ctx.close();
                 return;
             }
+            long sv = jwtService.getSessionVersion(jws.getPayload());
+            if (!sessionVersionStore.isValid(uid, sv)) {
+                wsWriter.writeError(ctx, "session_invalid", msg.getClientMsgId(), msg.getServerMsgId());
+                ctx.close();
+                return;
+            }
 
             Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
             sessionRegistry.bind(ch, uid, expMs);
@@ -104,6 +129,30 @@ public class WsAuthHandler {
             wsWriter.write(ctx, authFail("invalid_token"));
             ctx.close();
         }
+    }
+
+    private void afterAuthed(long userId, Channel ch, String reason) {
+        if (userId <= 0 || ch == null) {
+            return;
+        }
+        String connId = ch.attr(SessionRegistry.ATTR_CONN_ID).get();
+        if (connId == null || connId.isBlank()) {
+            return;
+        }
+
+        WsRouteStore.RouteInfo old = routeStore.setAndGetOld(userId, connId, ROUTE_TTL);
+        sessionRegistry.closeOtherChannels(userId, ch);
+
+        if (old == null || old.serverId() == null || old.serverId().isBlank()) {
+            return;
+        }
+        if (routeStore.serverId().equals(old.serverId())) {
+            if (old.connId() != null && !old.connId().isBlank() && !connId.equals(old.connId())) {
+                sessionRegistry.closeByConnId(userId, old.connId());
+            }
+            return;
+        }
+        clusterBus.publishKick(old.serverId(), userId, old.connId(), reason);
     }
 
     private boolean markResendAfterAuthOnce(Channel ch) {
@@ -134,4 +183,3 @@ public class WsAuthHandler {
         return fail;
     }
 }
-

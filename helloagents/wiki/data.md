@@ -16,6 +16,9 @@
 - `t_message_mention`
 - `t_friend_relation`
 - `t_friend_request`
+- `t_moment_post`
+- `t_moment_like`
+- `t_moment_comment`
 
 ### t_message 查询习惯（单聊）
 
@@ -100,6 +103,39 @@ schema 已包含常用索引：
 查询口径：
 - 管理员处理队列：`where group_id=? and status=PENDING and id < lastId order by id desc limit ?`
 - 申请者历史：`where from_user_id=? and status in (...) order by id desc limit ?`
+
+---
+
+## 朋友圈（Moments，MVP）
+
+### t_moment_post
+
+用途：朋友圈动态主体（软删）。
+
+关键字段：
+- `author_id`：作者 userId
+- `content`：文本内容（MVP：纯文本）
+- `like_count/comment_count`：计数缓存字段（由点赞/评论服务更新）
+- `deleted`：0=正常，1=已删除
+
+常用查询：
+- 时间线（好友 + 自己）：`where deleted=0 and author_id in (...) and id < lastId order by id desc limit ?`
+- 作者主页：`where deleted=0 and author_id=? and id < lastId order by id desc limit ?`
+
+### t_moment_like
+
+用途：点赞去重与统计。
+
+关键约束：
+- 唯一键：`uk_ml_post_user (post_id, user_id)`（用于 toggle 场景去重）
+
+### t_moment_comment
+
+用途：一级评论（软删）。
+
+常用查询：
+- 评论列表：`where post_id=? and deleted=0 and id < lastId order by id desc limit ?`
+- 索引：`idx_mc_post_id_id (post_id, id)`
 
 ## 领域实体与映射
 

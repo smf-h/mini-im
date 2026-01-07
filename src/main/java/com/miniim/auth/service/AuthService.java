@@ -26,6 +26,7 @@ public class AuthService {
     private final RefreshTokenStore refreshTokenStore;
     private final AuthProperties props;
     private final CodeService codeService;
+    private final SessionVersionStore sessionVersionStore;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final SecureRandom secureRandom = new SecureRandom();
@@ -36,7 +37,8 @@ public class AuthService {
             TokenHasher tokenHasher,
             RefreshTokenStore refreshTokenStore,
             AuthProperties props,
-            CodeService codeService
+            CodeService codeService,
+            SessionVersionStore sessionVersionStore
     ) {
         this.userMapper = userMapper;
         this.jwtService = jwtService;
@@ -44,6 +46,7 @@ public class AuthService {
         this.refreshTokenStore = refreshTokenStore;
         this.props = props;
         this.codeService = codeService;
+        this.sessionVersionStore = sessionVersionStore;
     }
 
     /**
@@ -92,7 +95,8 @@ public class AuthService {
             log.warn("ensure friendCode failed: userId={}, err={}", user.getId(), e.toString());
         }
 
-        String accessToken = jwtService.issueAccessToken(user.getId());
+        long sv = sessionVersionStore.bump(user.getId());
+        String accessToken = jwtService.issueAccessToken(user.getId(), sv);
         String refreshToken = issueRefreshToken(user.getId());
 
         return new LoginResponse(
@@ -125,7 +129,11 @@ public class AuthService {
         // 可选：使用时延长 TTL（滑动过期）。不想滑动就删掉这一行。
         refreshTokenStore.touch(tokenHash, Duration.ofSeconds(props.refreshTokenTtlSeconds()));
 
-        String accessToken = jwtService.issueAccessToken(session.userId());
+        long sv = sessionVersionStore.current(session.userId());
+        if (sv < 0) {
+            sv = 0;
+        }
+        String accessToken = jwtService.issueAccessToken(session.userId(), sv);
         return new RefreshResponse(session.userId(), accessToken, props.accessTokenTtlSeconds());
     }
 
@@ -133,6 +141,10 @@ public class AuthService {
         Jws<Claims> jws = jwtService.parseAccessToken(request.accessToken());
         Claims claims = jws.getPayload();
         long userId = jwtService.getUserId(claims);
+        long sv = jwtService.getSessionVersion(claims);
+        if (!sessionVersionStore.isValid(userId, sv)) {
+            throw new JwtException("session_invalid");
+        }
         return VerifyResponse.ok(userId);
     }
 

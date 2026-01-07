@@ -20,6 +20,7 @@ type UiMessage = {
   content: string
   ts: number
   status: 'sending' | 'sent' | 'read' | 'received'
+  revoked?: boolean
 }
 
 const route = useRoute()
@@ -40,6 +41,7 @@ const lastId = ref<string | null>(null)
 
 const draft = ref('')
 const errorMsg = ref<string | null>(null)
+const revokeClientMsgIds = new Set<string>()
 
 const wsCursor = ref(0)
 const chatEl = ref<HTMLElement | null>(null)
@@ -262,6 +264,7 @@ async function loadMore() {
         content: m.content,
         ts: new Date(m.createdAt).getTime(),
         status: 'sent' as const,
+        revoked: m.status === 4,
       }))
       .reverse()
 
@@ -317,6 +320,10 @@ function applyWsEvent(ev: WsEnvelope) {
     }
     return
   }
+  if (ev.type === 'ACK' && ev.ackType?.toLowerCase() === 'revoked') {
+    if (ev.clientMsgId) revokeClientMsgIds.delete(ev.clientMsgId)
+    return
+  }
   if (ev.type === 'ACK' && ev.ackType?.toLowerCase() === 'read') {
     if (!ev.serverMsgId) return
     if (ev.from !== peerUserId.value) return
@@ -329,7 +336,26 @@ function applyWsEvent(ev: WsEnvelope) {
     const target = items.value.find((m) => m.clientMsgId === ev.clientMsgId)
     if (target) {
       errorMsg.value = `发送失败: ${ev.reason ?? 'error'}`
+      return
     }
+    if (revokeClientMsgIds.has(ev.clientMsgId)) {
+      revokeClientMsgIds.delete(ev.clientMsgId)
+      errorMsg.value = `撤回失败: ${ev.reason ?? 'error'}`
+    }
+    return
+  }
+
+  if (ev.type === 'MESSAGE_REVOKED') {
+    if (!ev.serverMsgId) return
+    const myId = auth.userId
+    if (!myId) return
+    const ok =
+      (ev.from === myId && ev.to === peerUserId.value) || (ev.from === peerUserId.value && ev.to === myId)
+    if (!ok) return
+    const target = items.value.find((m) => m.serverMsgId === ev.serverMsgId)
+    if (!target) return
+    target.content = '已撤回'
+    target.revoked = true
     return
   }
 
@@ -345,6 +371,7 @@ function applyWsEvent(ev: WsEnvelope) {
       content: ev.body ?? '',
       ts: ev.ts ?? Date.now(),
       status: 'received',
+      revoked: ev.body === '已撤回',
     }
     items.value.push(msg)
     void nextTick(() => {
@@ -405,6 +432,7 @@ async function send() {
     content,
     ts: now,
     status: 'sending',
+    revoked: false,
   })
   stickToBottom.value = true
   void nextTick(() => scrollToBottom())
@@ -420,6 +448,32 @@ async function send() {
       ts: now,
     })
   } catch (e) {
+    errorMsg.value = String(e)
+  }
+}
+
+function canRevoke(m: UiMessage) {
+  if (m.fromUserId !== auth.userId) return false
+  if (!m.serverMsgId) return false
+  if (m.revoked) return false
+  return Date.now() - m.ts <= 2 * 60 * 1000
+}
+
+async function revokeMessage(m: UiMessage) {
+  if (!m.serverMsgId) return
+  errorMsg.value = null
+  const clientMsgId = `revoke-${uuid()}`
+  revokeClientMsgIds.add(clientMsgId)
+  try {
+    await ws.connect()
+    ws.send({
+      type: 'MESSAGE_REVOKE',
+      clientMsgId,
+      serverMsgId: m.serverMsgId,
+      ts: Date.now(),
+    })
+  } catch (e) {
+    revokeClientMsgIds.delete(clientMsgId)
     errorMsg.value = String(e)
   }
 }
@@ -508,6 +562,7 @@ watch(
           <div class="meta">
             <span class="muted">{{ m.fromUserId === auth.userId ? '我' : peerName }}</span>
             <span class="muted">{{ formatTime(m.ts) }}</span>
+            <button v-if="canRevoke(m)" class="miniBtn danger" @click.stop="revokeMessage(m)">撤回</button>
             <span v-if="m.fromUserId === auth.userId" class="status" :class="m.status">
               {{ m.status === 'sending' ? '发送中…' : m.status === 'read' ? '已读' : '未读' }}
             </span>
@@ -688,6 +743,39 @@ watch(
 }
 .bubble.me .meta {
   flex-direction: row-reverse;
+}
+.miniBtn {
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2px 10px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.65);
+  cursor: pointer;
+}
+.miniBtn:hover {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.15);
+}
+.miniBtn.danger {
+  border-color: rgba(239, 68, 68, 0.25);
+  color: rgba(220, 38, 38, 0.95);
+}
+.bubble.me .miniBtn {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+.bubble.me .miniBtn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.bubble.me .miniBtn.danger {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.95);
+}
+.bubble.me .miniBtn.danger:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 .content {
   white-space: pre-wrap;

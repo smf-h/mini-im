@@ -3,6 +3,7 @@ package com.miniim.domain.controller;
 import com.miniim.auth.web.AuthContext;
 import com.miniim.common.api.ApiCodes;
 import com.miniim.common.api.Result;
+import com.miniim.domain.cache.UserProfileCache;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.mapper.UserMapper;
 import com.miniim.domain.service.CodeService;
@@ -21,6 +22,7 @@ public class MeController {
 
     private final UserMapper userMapper;
     private final CodeService codeService;
+    private final UserProfileCache userProfileCache;
 
     public record MeProfileDto(
             Long id,
@@ -48,6 +50,20 @@ public class MeController {
             return Result.fail(ApiCodes.UNAUTHORIZED, "unauthorized");
         }
 
+        UserProfileCache.Value cached = userProfileCache.get(userId);
+        if (cached != null && cached.friendCode() != null && !cached.friendCode().isBlank()) {
+            return Result.ok(new MeProfileDto(
+                    cached.id(),
+                    cached.username(),
+                    cached.nickname(),
+                    cached.avatarUrl(),
+                    cached.status(),
+                    cached.friendCode(),
+                    cached.friendCodeUpdatedAt(),
+                    codeService.nextResetAt(cached.friendCodeUpdatedAt())
+            ));
+        }
+
         UserEntity u = userMapper.selectById(userId);
         if (u == null) {
             return Result.fail(ApiCodes.NOT_FOUND, "not_found");
@@ -58,7 +74,7 @@ public class MeController {
         }
 
         Integer status = u.getStatus() == null ? null : u.getStatus().getCode();
-        return Result.ok(new MeProfileDto(
+        MeProfileDto dto = new MeProfileDto(
                 u.getId(),
                 u.getUsername(),
                 u.getNickname(),
@@ -67,7 +83,17 @@ public class MeController {
                 u.getFriendCode(),
                 u.getFriendCodeUpdatedAt(),
                 codeService.nextResetAt(u.getFriendCodeUpdatedAt())
+        );
+        userProfileCache.put(userId, new UserProfileCache.Value(
+                dto.id(),
+                dto.username(),
+                dto.nickname(),
+                dto.avatarUrl(),
+                dto.status(),
+                dto.friendCode(),
+                dto.friendCodeUpdatedAt()
         ));
+        return Result.ok(dto);
     }
 
     @PostMapping("/friend-code/reset")
@@ -78,6 +104,7 @@ public class MeController {
         }
         try {
             String code = codeService.resetFriendCode(userId);
+            userProfileCache.evict(userId);
             UserEntity u = userMapper.selectById(userId);
             LocalDateTime updatedAt = u == null ? null : u.getFriendCodeUpdatedAt();
             return Result.ok(new ResetFriendCodeResponse(code, updatedAt, codeService.nextResetAt(updatedAt)));
@@ -95,4 +122,3 @@ public class MeController {
         }
     }
 }
-

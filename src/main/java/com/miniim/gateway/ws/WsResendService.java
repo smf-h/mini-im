@@ -8,6 +8,7 @@ import io.netty.channel.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -31,11 +32,14 @@ import java.util.concurrent.TimeUnit;
 public class WsResendService {
 
     private static final int LIMIT = 200;
+    private static final String RESEND_LOCK_PREFIX = "im:gw:lock:resend:";
+    private static final long RESEND_LOCK_TTL_SECONDS = 10;
 
     private final MessageMapper messageMapper;
     private final MessageMentionMapper messageMentionMapper;
     private final SingleChatMemberService singleChatMemberService;
     private final WsWriter wsWriter;
+    private final StringRedisTemplate redis;
     @Qualifier("imDbExecutor")
     private final Executor imDbExecutor;
 
@@ -48,6 +52,9 @@ public class WsResendService {
 
     public void resendForChannelsAsync(List<Channel> targets, long userId, String source) {
         if (targets == null || targets.isEmpty() || userId <= 0) {
+            return;
+        }
+        if (!tryAcquireResendLock(userId)) {
             return;
         }
         CompletableFuture.runAsync(() -> resendForChannels(targets, userId, source), imDbExecutor)
@@ -115,7 +122,9 @@ public class WsResendService {
         envelope.setTo(userId);
         envelope.setGroupId(msgEntity.getGroupId());
         envelope.setServerMsgId(msgEntity.getServerMsgId());
-        envelope.setBody(msgEntity.getContent());
+        envelope.setBody(msgEntity.getStatus() == com.miniim.domain.enums.MessageStatus.REVOKED
+                ? MessageEntity.REVOKED_PLACEHOLDER
+                : msgEntity.getContent());
         envelope.setMsgType(msgEntity.getMsgType() == null ? null : msgEntity.getMsgType().getDesc());
         envelope.setTs(toEpochMilli(msgEntity.getCreatedAt()));
         if (important) {
@@ -142,5 +151,20 @@ public class WsResendService {
             return Instant.now().toEpochMilli();
         }
         return time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
+
+    private boolean tryAcquireResendLock(long userId) {
+        // Redis 不可用时 fail-open：仍允许补发（单机模式/开发模式可用），但多实例下可能放大 DB 压力。
+        try {
+            return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(
+                    RESEND_LOCK_PREFIX + userId,
+                    String.valueOf(System.currentTimeMillis()),
+                    RESEND_LOCK_TTL_SECONDS,
+                    TimeUnit.SECONDS
+            ));
+        } catch (Exception e) {
+            log.debug("ws resend lock failed: userId={}, err={}", userId, e.toString());
+            return true;
+        }
     }
 }

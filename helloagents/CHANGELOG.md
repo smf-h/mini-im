@@ -10,12 +10,29 @@
 - CI: 新增 GitHub Actions（Java 17 + Maven test）
 - 分支保护: master 启用必需PR审核与状态检查
 - WS: 送达/已读/补发从 `t_message.status` 迁移为“成员游标”模型（`t_single_chat_member` / `t_group_member`），可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）
+- 幂等：`clientMsgId` 幂等 key 统一为 `im:idem:client_msg_id:{userId}:{biz}:{clientMsgId}`，TTL 默认调整为 1800s（本机缓存改为 `expireAfterWrite`）
+- 群聊：新增“策略切换”（推消息体/通知后拉取/不推兜底），并默认按“群规模 + 在线人数”自动选择（可配置强制模式）
 - 前端：扩展微信绿白视觉变量（颜色/阴影/圆角/分割线），新增 `Avatar/Badge/ListItem/Segmented` 微组件，并重构登录/会话/好友申请页为更接近微信的通栏列表与交互
 - 前端：重构为桌面端 Sidebar Layout（Sidebar + 列表栏 + 主内容区），新增 `/chats`、`/contacts`、`/settings` 路由，并为旧路由提供重定向兼容
 - 前端：新增全局 `+` 操作菜单（发起单聊/创建群聊/加入群组/添加朋友），并进一步打磨好友申请列表、群资料页、红点未读徽标与 toast 动效
 - 前端：群聊输入框支持 `@` 选择群成员（插入 `@昵称` 并发送 `mentions` 列表以触发 important）
 
 ### 新增
+- 网关：多实例路由（Redis SSOT）+ 跨实例控制通道（Redis Pub/Sub：`KICK/PUSH`），并支持按 `userId` 单端登录踢下线（带 `connId` 避免误踢）
+- 鉴权：`sessionVersion`（JWT `sv` claim）用于 token 即时失效；新登录 bump `sv`，旧 token 重新鉴权将被拒绝
+- 幂等：客户端 `clientMsgId` 幂等从本地 Caffeine 升级为 Redis `SETNX`（Redis 不可用时降级 Caffeine）
+- WS：发送者消息不乱序（per-channel Future 链队列）
+- 重连风暴缓解：离线补发增加跨实例短 TTL 锁，避免同一用户在短窗口内重复触发补发
+- 缓存：Redis cache-aside（个人信息 / 群基本信息 / 单聊会话映射），并在关键变更点失效
+- 缓存：好友ID集合（用于“好友可见性/时间线/朋友圈”等读优化），写路径主动失效 + TTL 兜底
+- 缓存：群成员ID集合（Redis Set）用于群发加速（成员变更主动失效 + TTL 兜底）
+- 朋友圈（MVP）：动态发布/删除、好友时间线、点赞/评论（后端 + 前端 `/moments`）
+- 小程序：新增微信小程序端（`miniprogram/`，原生 + TypeScript，单页容器）
+- 群聊：按实例分组批量 PUSH（批量路由 MGET + `userIds[]` 批量跨实例转发），支持 `important/normal` 分流
+- 群聊：HTTP 增量拉取 `GET /group/message/since`（配合 `GROUP_NOTIFY` 使用）
+- 前端：支持 `GROUP_NOTIFY` 后自动拉取增量并追加到当前群聊视图
+- 通用能力：HTTP `@RateLimit`（AOP + Redis Lua），对关键写接口返回 429（含 `Retry-After`）
+- 前端：收到 `session_invalid/invalid_token` 时清空 token 并回到登录页（避免无限重连）
 - 单聊（WS）：SAVED 落库确认、ACK_RECEIVED 接收确认、定时补发与离线标记（实现细节以代码为准）
 - 单聊视频通话（WebRTC，Phase1）：WS `CALL_*` 信令（invite/accept/reject/cancel/end/ice/timeout）+ 通话记录 HTTP（`/call/record/cursor`、`/call/record/list`）
 - 鉴权（WS）：新增 REAUTH（续期），允许在连接不断开的情况下刷新 accessToken 过期时间
@@ -34,6 +51,7 @@
 - 内容风控：新增违禁词替换（默认覆盖单聊/群聊/好友申请附言，命中替换为 `***`）
 - 后端：接入 Flyway（`src/main/resources/db/migration/*`），启动时自动迁移；对已有库使用 `baseline-version=0`
 - 配置：新增两份配置模板 `src/main/resources/application.env.yml`（仅变量）与 `src/main/resources/application.env.values.yml`（示例值）
+- 消息：新增撤回（2分钟，仅发送者）：WS `MESSAGE_REVOKE` + 广播 `MESSAGE_REVOKED`，撤回后对外统一展示“已撤回”（HTTP/WS/离线补发一致）
 
 ### 修复
 - WS：允许 `/ws?token=...`（query token）握手，修复浏览器端连接卡住导致 `auth_timeout`
@@ -55,6 +73,10 @@
 - 前端：修复单聊通话记录弹窗模板标签缺失导致 `npm -C frontend run build` 失败
 - 单聊：会话未读数 + 消息已读/未读展示（WS `ACK(read)` 推进游标并回执给发送方）
 - 后端：`imDbExecutor` 标记为 `@Primary`，修复 Spring `Executor` 注入歧义（`imDbExecutor` vs `taskScheduler`）
+- HTTP：未匹配路由/静态资源的请求返回 404（Result 封装），避免被兜底异常处理为 500
+- 配置：`application.yml` 移除明文数据库密码，改为环境变量注入；新增 `application-dev.yml` 承载开发期 SQL stdout 与 debug logger
+- 提交卫生：新增 `.gitattributes`，并在 `.gitignore` 中忽略小程序私有配置与模板目录，减少误提交风险
+- 稳定性：对关键路径的吞异常补齐最小 debug 日志/注释，降低静默失败定位成本
 
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 

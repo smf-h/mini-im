@@ -7,6 +7,13 @@
 - 非 ID 的 long/Long（例如分页 `total/size/current`）仍保持 JSON 数字类型。
 - 客户端建议：凡是语义为“ID/游标”的字段，一律按字符串处理（展示/比较/拼接），不要转 `Number(...)`。
 
+## 微信小程序端（miniprogram）
+
+- 工程目录：`miniprogram/`（原生小程序 + TypeScript，单页容器）
+- 配置：`miniprogram/config.ts`（`HTTP_BASE` / `WS_URL`）
+- HTTP：`Authorization: Bearer <accessToken>`（遇业务 `code=40100` 或 HTTP 401 自动 refresh 重试一次）
+- WS：握手 query `?token=<accessToken>`，连接后发送 `type="AUTH"` 帧；收到 `AUTH_OK` 视为在线
+
 ## HTTP API
 
 ### Auth
@@ -77,6 +84,30 @@
 实现位置：`com.miniim.domain.controller.UserController`
 、`com.miniim.domain.controller.MeController`
 
+### Moments（朋友圈，MVP）
+- `POST /moment/post/create`
+  - body：`{ "content": "..." }`
+  - 响应：`{ "postId": "123" }`
+- `POST /moment/post/delete`
+  - body：`{ "postId": 123 }`
+- `GET /moment/feed/cursor?limit=20&lastId=...`
+  - 语义：时间线（好友 + 自己），按 `id` 倒序游标分页
+  - 返回：`PostDto[]`（以代码为准，包含 `likedByMe/likeCount/commentCount`）
+- `GET /moment/user/cursor?userId=10001&limit=20&lastId=...`
+  - 语义：指定作者动态（需满足可见性：好友或自己）
+- `POST /moment/like/toggle`
+  - body：`{ "postId": 123 }`
+  - 响应：`{ "liked": true, "likeCount": 1 }`
+- `POST /moment/comment/create`
+  - body：`{ "postId": 123, "content": "..." }`
+  - 响应：`{ "commentId": "456" }`
+- `POST /moment/comment/delete`
+  - body：`{ "commentId": 456 }`
+- `GET /moment/comment/cursor?postId=123&limit=20&lastId=...`
+  - 语义：按 `id` 倒序游标分页
+
+实现位置：`com.miniim.domain.controller.MomentController`
+
 ### Call Record（通话记录）
 - `GET /call/record/cursor?limit=20&lastId=yyy`
   - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
@@ -144,6 +175,8 @@
 ### Group Messages（群消息查询）
 - `GET /group/message/cursor?groupId=xxx&limit=20&lastId=yyy`
   - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+- `GET /group/message/since?groupId=xxx&limit=50&sinceId=zzz`
+  - 语义：按 `id` 升序，返回 `id > sinceId` 的增量；`sinceId` 为空表示从 0 开始
 
 实现位置：`com.miniim.domain.controller.GroupMessageController`
 
@@ -164,10 +197,10 @@
 - 帧处理：`com.miniim.gateway.ws.WsFrameHandler`
 - 消息封装：`com.miniim.gateway.ws.WsEnvelope`
 
-具体监听地址/路径等以 `src/main/resources/application-gateway.yml` 配置为准。
+具体监听地址/路径等以 `src/main/resources/application.yml` 配置为准。
 
 ### 在线路由（Redis routeKey）
-- 网关实例在连接鉴权成功后，会写入 `im:gw:route:<userId> = <instanceId>`（带 TTL），用于“多实例路由定位”。
+- 网关实例在连接鉴权成功后，会写入 `im:gw:route:<userId> = <serverId>|<connId>`（带 TTL），用于“多实例路由定位”。
 - 同一实例内允许同一 `userId` 同时存在多个 WS 连接（例如多个浏览器标签页）；仅当该 `userId` 的最后一个连接断开时才会删除 routeKey，避免在线状态抖动。
 
 ### 握手鉴权（客户端注意事项）
@@ -188,6 +221,7 @@
 - `REAUTH`：续期（刷新服务端记录的 token 过期时间）。
 - `SINGLE_CHAT`：单聊发送消息（当前仅 TEXT）。
 - `GROUP_CHAT`：群聊发送消息（当前仅 TEXT；重要消息= @我/回复我）。
+- `GROUP_NOTIFY`：群聊新消息通知（不含消息体；客户端收到后走 HTTP `/group/message/since` 拉取增量）。
 - `FRIEND_REQUEST`：发起好友申请（先落库，必要时 best-effort 推送给对方）。
 - `GROUP_JOIN_REQUEST`：有人申请入群（服务端推送给群主/管理员，best-effort）。
 - `GROUP_JOIN_DECISION`：入群申请处理结果（服务端推送给申请者，best-effort）。
@@ -286,6 +320,41 @@
 - `POST /dnd/group/set`
   - body：`{ "groupId": "20001", "muted": true }`
   - 说明：仅修改“自己这一侧”的免打扰；不影响消息收发；不通知对方；需要是群成员
+
+## MESSAGE_REVOKE（客户端 → 服务端）
+
+> 目标：仅发送者可撤回，且发送后 2 分钟内有效。服务端保留原文，但对外输出统一展示“已撤回”。
+
+### 请求（客户端 → 服务端）
+- 必填字段：
+  - `type="MESSAGE_REVOKE"`
+  - `serverMsgId`：要撤回的目标消息 id
+- 可选字段：
+  - `clientMsgId`：用于客户端关联撤回请求与错误回包
+  - `ts`：客户端时间戳（仅用于展示/诊断）
+
+### ACK（服务端 → 发起方）
+- 成功后回：`type="ACK"`
+  - `ackType="revoked"`
+  - `serverMsgId`：目标消息 id
+
+### 推送（服务端 → 相关方）
+- `type="MESSAGE_REVOKED"`，用于让在线端即时更新 UI：
+  - `serverMsgId`：被撤回的目标消息 id
+  - `from`：撤回者 userId
+  - 单聊：`to` = 对端 userId
+  - 群聊：`groupId` = 群 id
+  - `ts`：服务端时间戳（毫秒）
+
+### 常见错误码（`type="ERROR".reason`）
+- `missing_server_msg_id`：未传 `serverMsgId`
+- `bad_server_msg_id`：`serverMsgId` 非法
+- `message_not_found`：目标消息不存在
+- `not_message_sender`：非发送者
+- `revoke_timeout`：超过 2 分钟窗口
+- `internal_error`：服务端内部错误
+
+---
 
 ## FRIEND_REQUEST（客户端 → 服务端）
 

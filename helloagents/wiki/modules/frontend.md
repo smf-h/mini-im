@@ -28,15 +28,18 @@
 - 通讯录模块（双栏）：`frontend/src/views/ContactsView.vue`（左：导航+好友；右：新的朋友/群组/个人页）
 - 好友申请 UI：`frontend/src/views/FriendRequestsView.vue`（入口：`/contacts/new-friends`）
 - 群聊 UI：`frontend/src/views/GroupChatView.vue`（入口：`/chats/group/:groupId`）
+- 消息撤回：`frontend/src/views/ChatView.vue` / `frontend/src/views/GroupChatView.vue`（WS `MESSAGE_REVOKE` + 推送 `MESSAGE_REVOKED`）
 - 群组列表/创建/申请入群：`frontend/src/views/GroupsView.vue`（入口：`/contacts/groups`）
 - 设置页：`frontend/src/views/SettingsView.vue`
 - 个人主页 UI：`frontend/src/views/UserProfileView.vue`
 - 群资料 UI：`frontend/src/views/GroupProfileView.vue`
+- 朋友圈（MVP）：`frontend/src/views/MomentsView.vue`（入口：`/moments`；Sidebar 提供一级入口）
 
 ## 布局架构（桌面端 Sidebar Layout）
 - 全局禁用 body 滚动（`body { overflow: hidden; }`），只允许在“列表栏/主内容区”内滚动
 - 三段结构：
   - Sidebar（64px）：一级入口 `/chats`、`/contacts`、`/settings`
+  - Sidebar（扩展）：新增 `/moments` 入口（朋友圈）
   - List Panel：模块内部的二级列表（会话列表/通讯录列表）
   - Main Stage：展示聊天窗口、好友资料、群资料等
 
@@ -52,6 +55,7 @@
 - 气泡大小随内容变化，并限制最大宽度
 - 自己消息靠右、对方消息靠左
 - 新消息到达/发送后自动滚动到底部；当用户上滑查看历史时不强制抢占滚动位置
+- 消息撤回：我方消息在 2 分钟窗口内展示“撤回”入口；发送 WS `MESSAGE_REVOKE`，收到 `MESSAGE_REVOKED`/`ACK(revoked)` 后将目标消息内容更新为“已撤回”
 - 通话入口：单聊页提供“视频通话”；通话面板为全局覆盖层（任意页面可接听/挂断）
 - 通话记录：单聊页提供“通话记录”弹窗（基于 `/call/record/cursor`，前端按 peer 过滤展示）
 
@@ -104,6 +108,12 @@
   - 选择后插入 `@昵称` 到消息文本中
   - 发送时会把该成员的 `userId` 放入 `mentions`（WS `GROUP_CHAT.mentions`），用于服务端计算 `important=true`（@我/回复我）
 
+## 大群通知（GROUP_NOTIFY）
+- 背景：群规模/在线人数较大时，服务端可能不再下发消息体，而是下发 `type=GROUP_NOTIFY` 的轻量通知；客户端收到后走 HTTP 增量拉取补齐消息。
+- 前端行为：
+  - 群聊页：收到 `GROUP_NOTIFY` 且 `groupId` 匹配当前会话时，调用 `GET /group/message/since?groupId=...&sinceId=<本地最大serverMsgId>` 拉取增量并追加到消息列表
+  - 非当前群聊页：默认不弹 toast（避免通知风暴）；如需提醒可仅对 `important=true` 做弱提示（后续可扩展）
+
 ## 会话免打扰（DND）
 - 目标：按“会话维度”屏蔽站内通知（toast），不影响消息收发；不对对方产生任何可见通知或行为改变。
 - 规则：
@@ -128,3 +138,6 @@
   - `GET /group/member/list`（用于展示 `speakMuteUntil`）
 - WS 行为：
   - 被禁言用户发送 `GROUP_CHAT` 会收到 `ERROR reason=group_speak_muted`，前端提示并不落库消息
+
+## 踢下线/会话失效（sessionVersion）
+- 当账号在另一处登录导致会话失效时，服务端会返回 `AUTH_FAIL reason=session_invalid` 或 `ERROR reason=kicked/session_invalid` 并断开连接；前端会清空本地 token、关闭 WS，并跳转回登录页（避免“停留在旧页面但无权限”的困惑）。

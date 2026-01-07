@@ -2,8 +2,11 @@ package com.miniim.gateway.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniim.auth.service.JwtService;
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.config.GatewayProperties;
 import com.miniim.gateway.session.SessionRegistry;
+import com.miniim.gateway.session.WsRouteStore;
+import com.miniim.gateway.ws.cluster.WsClusterBus;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -31,7 +34,10 @@ public class NettyWsServer implements SmartLifecycle {
     private final GatewayProperties props;
     private final ObjectMapper objectMapper;
     private final JwtService jwtService;
+    private final SessionVersionStore sessionVersionStore;
     private final SessionRegistry sessionRegistry;
+    private final WsRouteStore routeStore;
+    private final WsClusterBus clusterBus;
     private final WsWriter wsWriter;
     private final WsAuthHandler wsAuthHandler;
     private final WsPingHandler wsPingHandler;
@@ -40,6 +46,7 @@ public class NettyWsServer implements SmartLifecycle {
     private final WsFriendRequestHandler wsFriendRequestHandler;
     private final WsSingleChatHandler wsSingleChatHandler;
     private final WsGroupChatHandler wsGroupChatHandler;
+    private final WsMessageRevokeHandler wsMessageRevokeHandler;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -49,7 +56,10 @@ public class NettyWsServer implements SmartLifecycle {
     public NettyWsServer(GatewayProperties props,
                          ObjectMapper objectMapper,
                          JwtService jwtService,
+                         SessionVersionStore sessionVersionStore,
                          SessionRegistry sessionRegistry,
+                         WsRouteStore routeStore,
+                         WsClusterBus clusterBus,
                          WsWriter wsWriter,
                          WsAuthHandler wsAuthHandler,
                          WsPingHandler wsPingHandler,
@@ -57,11 +67,15 @@ public class NettyWsServer implements SmartLifecycle {
                          WsAckHandler wsAckHandler,
                          WsFriendRequestHandler wsFriendRequestHandler,
                          WsSingleChatHandler wsSingleChatHandler,
-                         WsGroupChatHandler wsGroupChatHandler) {
+                         WsGroupChatHandler wsGroupChatHandler,
+                         WsMessageRevokeHandler wsMessageRevokeHandler) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
+        this.sessionVersionStore = sessionVersionStore;
         this.sessionRegistry = sessionRegistry;
+        this.routeStore = routeStore;
+        this.clusterBus = clusterBus;
         this.wsWriter = wsWriter;
         this.wsAuthHandler = wsAuthHandler;
         this.wsPingHandler = wsPingHandler;
@@ -70,6 +84,7 @@ public class NettyWsServer implements SmartLifecycle {
         this.wsFriendRequestHandler = wsFriendRequestHandler;
         this.wsSingleChatHandler = wsSingleChatHandler;
         this.wsGroupChatHandler = wsGroupChatHandler;
+        this.wsMessageRevokeHandler = wsMessageRevokeHandler;
     }
 
     @Override
@@ -107,7 +122,14 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new IdleStateHandler(0, 60, 0));
 
                         // 4) 握手鉴权：在 HTTP Upgrade 阶段校验 accessToken，并把 userId/exp 绑定到 channel
-                        p.addLast(new WsHandshakeAuthHandler(props.path(), jwtService, sessionRegistry));
+                        p.addLast(new WsHandshakeAuthHandler(
+                                props.path(),
+                                jwtService,
+                                sessionVersionStore,
+                                sessionRegistry,
+                                routeStore,
+                                clusterBus
+                        ));
 
                         // 5) WebSocket 协议处理：
                         //    - 处理握手（upgrade）
@@ -131,7 +153,8 @@ public class NettyWsServer implements SmartLifecycle {
                                 wsAckHandler,
                                 wsFriendRequestHandler,
                                 wsSingleChatHandler,
-                                wsGroupChatHandler
+                                wsGroupChatHandler,
+                                wsMessageRevokeHandler
                         ));
                     }
                 }

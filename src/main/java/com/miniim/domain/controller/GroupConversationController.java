@@ -6,6 +6,7 @@ import com.miniim.common.api.Result;
 import com.miniim.domain.dto.GroupConversationDto;
 import com.miniim.domain.entity.GroupEntity;
 import com.miniim.domain.entity.MessageEntity;
+import com.miniim.domain.enums.MessageStatus;
 import com.miniim.domain.mapper.MessageMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.GroupService;
@@ -114,7 +115,7 @@ public class GroupConversationController {
                 GroupConversationDto.LastMessageDto lm = new GroupConversationDto.LastMessageDto();
                 lm.setServerMsgId(last.getServerMsgId());
                 lm.setFromUserId(last.getFromUserId());
-                lm.setContent(last.getContent());
+                lm.setContent(last.getStatus() == MessageStatus.REVOKED ? MessageEntity.REVOKED_PLACEHOLDER : last.getContent());
                 lm.setCreatedAt(last.getCreatedAt());
                 dto.setLastMessage(lm);
             }
@@ -124,4 +125,3 @@ public class GroupConversationController {
         return Result.ok(out);
     }
 }
-

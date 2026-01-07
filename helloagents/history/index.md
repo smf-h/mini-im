@@ -40,6 +40,17 @@
 | 202601041605 | WS handler 整理（抽离 FRIEND_REQUEST） | 重构 | ?已完成 | helloagents/history/2026-01/202601041605_refactor_ws_friend_request/ |
 | 202601041618 | WS handler 整理（拆分单聊/群聊） | 重构 | ?已完成 | helloagents/history/2026-01/202601041618_refactor_ws_chat_split/ |
 | 202601041715 | WS handler 整理（拆分 writer/auth/ping） | 重构 | ?已完成 | helloagents/history/2026-01/202601041715_ws_frame_core_split/ |
+| 202601041940 | WS 多实例路由 + 单端登录踢下线（sessionVersion） | 功能 | ?已完成 | helloagents/history/2026-01/202601041940_ws_cluster_single_login/ |
+| 202601041958 | Redis 缓存（三项：个人信息/群基本信息/单聊映射） | 优化 | ?已完成 | helloagents/history/2026-01/202601041958_cache_core_profiles_singlechat/ |
+| 202601042139 | HTTP 限流（@RateLimit + AOP + Redis Lua） | 功能 | ?已完成 | helloagents/history/2026-01/202601042139_rate_limit/ |
+| 202601051826 | WS 发送者消息不乱序（per-channel Future 链） | 优化 | ?已完成 | helloagents/history/2026-01/202601051826_ws_sender_order/ |
+| 202601052050 | 群聊大群优化（按实例分组批量 PUSH） | 优化 | ?已完成 | helloagents/history/2026-01/202601052050_group_fanout_by_instance/ |
+| 202601052110 | 群聊策略切换（推消息体/通知后拉取/不推兜底） | 优化 | ?已完成 | helloagents/history/2026-01/202601052110_group_chat_strategy_switch/ |
+| 202601052113 | Redis 幂等强化（ClientMsgId，TTL=1800s） | 优化 | ?已完成 | helloagents/history/2026-01/202601052113_idempotency_redis/ |
+| 202601061958 | 朋友圈（Moments）MVP | 功能 | ?已完成 | helloagents/history/2026-01/202601061958_moments_mvp/ |
+| 202601062236 | 消息撤回（2分钟，仅发送者） | 功能 | ?已完成 | helloagents/history/2026-01/202601062236_message_revoke/ |
+| 202601062334 | 微信小程序端（原生+TS，单页） | 功能 | ?已完成 | helloagents/history/2026-01/202601062334_wechat_miniprogram/ |
+| 202601072156 | 待提交代码质量审查与收敛 | 维护 | ?已完成 | helloagents/history/2026-01/202601072156_precommit_quality_review/ |
 
 ---
 
@@ -54,6 +65,17 @@
 - 202601041605_refactor_ws_friend_request - WS handler 整理（抽离 FRIEND_REQUEST）
 - 202601041618_refactor_ws_chat_split - WS handler 整理（拆分单聊/群聊）
 - 202601041715_ws_frame_core_split - WS handler 整理（拆分 writer/auth/ping）
+- 202601041940_ws_cluster_single_login - WS 多实例路由 + 单端登录踢下线（sessionVersion）
+- 202601041958_cache_core_profiles_singlechat - Redis 缓存（三项：个人信息/群基本信息/单聊映射）
+- 202601042139_rate_limit - HTTP 限流（@RateLimit + AOP + Redis Lua）
+- 202601051826_ws_sender_order - WS 发送者消息不乱序（per-channel Future 链）
+- 202601052050_group_fanout_by_instance - 群聊大群优化（按实例分组批量 PUSH）
+- 202601052110_group_chat_strategy_switch - 群聊策略切换（推消息体/通知后拉取/不推兜底）
+- 202601052113_idempotency_redis - Redis 幂等强化（ClientMsgId，TTL=1800s）
+- 202601061958_moments_mvp - 朋友圈（Moments）MVP
+- 202601062236_message_revoke - 消息撤回（2分钟，仅发送者）
+- 202601062334_wechat_miniprogram - 微信小程序端（原生+TS，单页）
+- 202601072156_precommit_quality_review - 待提交代码质量审查与收敛
 
 ### 2025-12
 

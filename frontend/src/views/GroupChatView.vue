@@ -20,6 +20,7 @@ type UiMessage = {
   ts: number
   status: 'sending' | 'sent' | 'received'
   important?: boolean
+  revoked?: boolean
 }
 
 const route = useRoute()
@@ -58,6 +59,7 @@ const chatEl = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 
 let lastSentReadAck: bigint = 0n
+let notifyPulling = false
 
 const members = ref<GroupMemberDto[]>([])
 const membersLoaded = ref(false)
@@ -91,6 +93,7 @@ const mentionQuery = ref('')
 const mentionActiveIndex = ref(0)
 const mentionPicked = ref<Record<string, true>>({})
 const mentionWrapEl = ref<HTMLElement | null>(null)
+const revokeClientMsgIds = new Set<string>()
 
 function uuid() {
   return crypto.randomUUID()
@@ -109,6 +112,71 @@ function toBigIntOrNull(id?: string | null) {
     return BigInt(id)
   } catch {
     return null
+  }
+}
+
+function maxServerMsgId() {
+  let max = 0n
+  for (const m of items.value) {
+    const sid = toBigIntOrNull(m.serverMsgId)
+    if (sid != null && sid > max) max = sid
+  }
+  return max
+}
+
+async function pullSinceLatest(hintServerMsgId?: string | null) {
+  if (notifyPulling) return
+  notifyPulling = true
+  try {
+    const curMax = maxServerMsgId()
+    const hint = toBigIntOrNull(hintServerMsgId ?? null)
+    if (hint != null && hint <= curMax) return
+
+    const qs = new URLSearchParams()
+    qs.set('groupId', groupId.value)
+    qs.set('limit', '50')
+    if (curMax > 0n) qs.set('sinceId', curMax.toString())
+
+    const data = await apiGet<MessageEntity[]>(`/group/message/since?${qs.toString()}`)
+    if (!data.length) return
+
+    const existing = new Set(items.value.map((m) => m.serverMsgId).filter(Boolean))
+    const mapped: UiMessage[] = []
+    for (const m of data) {
+      if (!m.serverMsgId || existing.has(m.serverMsgId)) continue
+      mapped.push({
+        clientMsgId: m.clientMsgId ?? uuid(),
+        serverMsgId: m.serverMsgId,
+        fromUserId: m.fromUserId,
+        content: m.content,
+        ts: new Date(m.createdAt).getTime(),
+        status: m.fromUserId === auth.userId ? 'sent' : 'received',
+        revoked: m.status === 4,
+      })
+    }
+    if (!mapped.length) return
+
+    const shouldStick = stickToBottom.value || isNearBottom()
+    items.value.push(...mapped)
+    void users.ensureBasics(Array.from(new Set(mapped.map((x) => x.fromUserId))))
+
+    for (const m of mapped) {
+      if (m.fromUserId === auth.userId) continue
+      if (m.serverMsgId) sendAckDelivered(m.serverMsgId, m.fromUserId)
+    }
+
+    await nextTick()
+    if (shouldStick) {
+      stickToBottom.value = true
+      scrollToBottom()
+      if (document.visibilityState === 'visible') {
+        readUpToLatestVisible()
+      }
+    }
+  } catch {
+    // ignore notify pull errors
+  } finally {
+    notifyPulling = false
   }
 }
 
@@ -212,6 +280,7 @@ async function loadMore() {
         content: m.content,
         ts: new Date(m.createdAt).getTime(),
         status: 'sent' as const,
+        revoked: m.status === 4,
       }))
       .reverse()
 
@@ -471,6 +540,7 @@ async function send() {
     content,
     ts: now,
     status: 'sending',
+    revoked: false,
   })
   stickToBottom.value = true
   void nextTick(() => scrollToBottom())
@@ -506,6 +576,10 @@ function applyWsEvent(ev: WsEnvelope) {
     if (ev.body) target.content = ev.body
     return
   }
+  if (ev.type === 'ACK' && ev.ackType?.toLowerCase() === 'revoked') {
+    if (ev.clientMsgId) revokeClientMsgIds.delete(ev.clientMsgId)
+    return
+  }
 
   if (ev.type === 'ERROR' && ev.clientMsgId) {
     const target = items.value.find((m) => m.clientMsgId === ev.clientMsgId)
@@ -515,7 +589,28 @@ function applyWsEvent(ev: WsEnvelope) {
       } else {
         errorMsg.value = `发送失败: ${ev.reason ?? 'error'}`
       }
+      return
     }
+    if (revokeClientMsgIds.has(ev.clientMsgId)) {
+      revokeClientMsgIds.delete(ev.clientMsgId)
+      errorMsg.value = `撤回失败: ${ev.reason ?? 'error'}`
+    }
+    return
+  }
+
+  if (ev.type === 'MESSAGE_REVOKED') {
+    if (!ev.serverMsgId) return
+    if (!ev.groupId || ev.groupId !== groupId.value) return
+    const target = items.value.find((m) => m.serverMsgId === ev.serverMsgId)
+    if (!target) return
+    target.content = '已撤回'
+    target.revoked = true
+    return
+  }
+
+  if (ev.type === 'GROUP_NOTIFY') {
+    if (!ev.groupId || ev.groupId !== groupId.value) return
+    void pullSinceLatest(ev.serverMsgId ?? null)
     return
   }
 
@@ -532,6 +627,7 @@ function applyWsEvent(ev: WsEnvelope) {
       ts: ev.ts ?? Date.now(),
       status: 'received',
       important: !!ev.important,
+      revoked: ev.body === '已撤回',
     }
     items.value.push(msg)
     void users.ensureBasics([ev.from])
@@ -552,6 +648,32 @@ function applyWsEvent(ev: WsEnvelope) {
         sendAckRead(ev.serverMsgId, ev.from)
       }
     }
+  }
+}
+
+function canRevoke(m: UiMessage) {
+  if (m.fromUserId !== auth.userId) return false
+  if (!m.serverMsgId) return false
+  if (m.revoked) return false
+  return Date.now() - m.ts <= 2 * 60 * 1000
+}
+
+async function revokeMessage(m: UiMessage) {
+  if (!m.serverMsgId) return
+  errorMsg.value = null
+  const clientMsgId = `grevoke-${uuid()}`
+  revokeClientMsgIds.add(clientMsgId)
+  try {
+    await ws.connect()
+    ws.send({
+      type: 'MESSAGE_REVOKE',
+      clientMsgId,
+      serverMsgId: m.serverMsgId,
+      ts: Date.now(),
+    })
+  } catch (e) {
+    revokeClientMsgIds.delete(clientMsgId)
+    errorMsg.value = String(e)
   }
 }
 
@@ -638,6 +760,7 @@ watch(
             <span class="muted">{{ formatTime(new Date(m.ts).toISOString()) }}</span>
             <span v-if="m.important && m.fromUserId !== auth.userId" class="tag">@我</span>
             <button v-if="m.serverMsgId" class="miniBtn" @click.stop="startReply(m)">回复</button>
+            <button v-if="canRevoke(m)" class="miniBtn danger" @click.stop="revokeMessage(m)">撤回</button>
             <span v-if="m.fromUserId === auth.userId" class="status" :class="m.status">
               {{ m.status === 'sending' ? '发送中…' : '已发送' }}
             </span>
@@ -845,6 +968,17 @@ watch(
   color: rgba(255, 255, 255, 0.95);
 }
 .bubble.me .miniBtn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.miniBtn.danger {
+  border-color: rgba(239, 68, 68, 0.25);
+  color: rgba(220, 38, 38, 0.95);
+}
+.bubble.me .miniBtn.danger {
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.95);
+}
+.bubble.me .miniBtn.danger:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 .replyBar {

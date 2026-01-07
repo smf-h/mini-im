@@ -72,3 +72,41 @@
 
 敏感信息处理：
 - `steps.*.raw` 会对 `token` 字段做脱敏（不会输出 token 明文）。
+
+## WebSocket 多实例/多端冒烟（两实例联调）
+
+用于快速验证：
+- 两实例路由：跨实例 PUSH（SINGLE_CHAT、GROUP_CHAT/GROUP_NOTIFY）
+- 发送者顺序：同一连接连续发送两条消息，对端到达顺序不乱
+- 群聊策略：`auto/push/notify/none`（notify 会走 HTTP `/group/message/since` 拉取增量）
+- 单登录踢下线：同一用户在不同实例建立新连接后，旧连接会收到 `ERROR {reason:kicked}` 并断开（可用 `-DmultiDevice=false` 关闭该断言）
+  - `run.ps1/auto-run.ps1` 可直接用 `-NoMultiDevice` 关闭
+
+前置条件：
+- 两个后端实例已启动（HTTP/WS 端口不同；且共用同一 Redis/MySQL）
+- 本机安装 JDK（`javac`/`java`）
+
+运行：
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-smoke-test/run.ps1`
+- 一键启动两实例并执行（推荐）：`powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-smoke-test/auto-run.ps1`
+  - 默认会检查本机 `MySQL:3306` 与 `Redis:6379` 是否可连；若你暂时没启动依赖，可加 `-SkipInfraCheck`
+  - 默认会在缺少 jar 时自动 `mvn -DskipTests package`；若你已手动打包，可加 `-SkipBuild`
+  - 默认会额外跑一次“朋友圈（Moments）HTTP 冒烟”；如只想测 WS，可加 `-SkipMomentsSmoke`
+  - 失败排查：实例日志会写到 `logs/ws-cluster-smoke/`
+
+常用参数：
+- `-WsUrlA/-WsUrlB`：默认 `ws://127.0.0.1:9001/ws` / `ws://127.0.0.1:9002/ws`
+- `-HttpBaseA/-HttpBaseB`：默认 `http://127.0.0.1:8080` / `http://127.0.0.1:8082`
+- `-GroupStrategyMode`：`auto|push|notify|none`（用于断言服务端实际下发类型；若要测 notify，请用启动参数把服务端 `im.group-chat.strategy.mode` 设为 `notify`）
+- `-UserAName/-UserBName/-Password`：脚本会走 `/auth/login` 自动注册并拿 token；不会输出 token 明文
+
+## 朋友圈（Moments）HTTP 冒烟
+
+用于快速验证：好友可见性（好友+自见）、发动态、时间线拉取、点赞 toggle、评论增删、删除动态。
+
+前置条件：
+- 服务端已启动（至少一个 HTTP 实例）
+
+运行：
+- 单独跑：`powershell -ExecutionPolicy Bypass -File scripts/moments-smoke-test/run.ps1 -HttpBaseA http://127.0.0.1:8080 -HttpBaseB http://127.0.0.1:8082 -Password p`
+- 跟随多实例自动冒烟：默认 `scripts/ws-cluster-smoke-test/auto-run.ps1` 会一并执行（可用 `-SkipMomentsSmoke` 跳过）

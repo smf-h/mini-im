@@ -17,6 +17,7 @@ public class JwtService {
 
     public static final String CLAIM_USER_ID = "uid";
     public static final String CLAIM_TOKEN_TYPE = "typ";
+    public static final String CLAIM_SESSION_VERSION = "sv";
 
     public static final String TOKEN_TYPE_ACCESS = "access";
 
@@ -40,6 +41,10 @@ public class JwtService {
      * </ul>
      */
     public String issueAccessToken(long userId) {
+        return issueAccessToken(userId, 0);
+    }
+
+    public String issueAccessToken(long userId, long sessionVersion) {
         Instant now = Instant.now();
         Instant exp = now.plusSeconds(props.accessTokenTtlSeconds());
 
@@ -50,7 +55,8 @@ public class JwtService {
                 .expiration(Date.from(exp))
                 .claims(Map.of(
                         CLAIM_USER_ID, userId,
-                        CLAIM_TOKEN_TYPE, TOKEN_TYPE_ACCESS
+                        CLAIM_TOKEN_TYPE, TOKEN_TYPE_ACCESS,
+                        CLAIM_SESSION_VERSION, sessionVersion
                 ))
                 .signWith(key)
                 .compact();
@@ -87,6 +93,11 @@ public class JwtService {
             throw new JwtException("missing_uid");
         }
         return uid.longValue();
+    }
+
+    public long getSessionVersion(Claims claims) {
+        Number sv = claims.get(CLAIM_SESSION_VERSION, Number.class);
+        return sv == null ? 0 : sv.longValue();
     }
 
 }

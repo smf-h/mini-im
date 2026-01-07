@@ -2,6 +2,7 @@ package com.miniim.common.web;
 
 import com.miniim.common.api.ApiCodes;
 import com.miniim.common.api.Result;
+import com.miniim.common.ratelimit.RateLimitExceededException;
 import io.jsonwebtoken.JwtException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -11,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 全局异常处理：把常见异常“翻译”为统一的 Result JSON。
@@ -54,6 +56,13 @@ public class GlobalExceptionHandler {
                 .body(Result.fail(ApiCodes.BAD_REQUEST, "duplicate_key"));
     }
 
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<Result<Void>> handleRateLimit(RateLimitExceededException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(Math.max(1, e.getRetryAfterSeconds())))
+                .body(Result.fail(ApiCodes.TOO_MANY_REQUESTS, e.getMessage() == null ? "too_many_requests" : e.getMessage()));
+    }
+
     /**
      * Redis 不可用：登录/刷新等依赖 Redis 的能力会失败。
      */
@@ -72,6 +81,15 @@ public class GlobalExceptionHandler {
         String msg = (e.getMessage() == null || e.getMessage().isBlank()) ? "invalid_token" : e.getMessage();
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(Result.fail(ApiCodes.UNAUTHORIZED, msg));
+    }
+
+    /**
+     * 未匹配到任何 Controller 且静态资源也不存在：应返回 404，而不是被兜底异常处理为 500。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Result<Void>> handleNoResourceFound(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.fail(ApiCodes.NOT_FOUND, "not_found"));
     }
 
     /**

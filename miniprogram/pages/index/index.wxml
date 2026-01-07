@@ -1,0 +1,123 @@
+<!--index.wxml-->
+<navigation-bar title="mini-im" back="{{false}}" color="#333333" background="#FFFFFF"></navigation-bar>
+
+<view class="qq-page">
+  <view class="qq-bg">
+    <view class="qq-topbar">
+      <view class="qq-menu" aria-label="menu">
+        <view class="qq-menu-line"></view>
+        <view class="qq-menu-line"></view>
+        <view class="qq-menu-line short"></view>
+      </view>
+      <text class="qq-top-title">mini-im</text>
+      <view class="qq-top-action" aria-label="more">
+        <view class="qq-more-dot"></view>
+        <view class="qq-more-dot"></view>
+        <view class="qq-more-dot"></view>
+      </view>
+    </view>
+
+    <view class="qq-bubbles">
+      <view class="bubble b1"></view>
+      <view class="bubble b2"></view>
+      <view class="bubble b3"></view>
+      <view class="bubble b4"></view>
+    </view>
+  </view>
+
+  <view class="qq-content">
+    <view class="qq-card qq-enter">
+      <block wx:if="{{canIUseNicknameComp && !hasUserInfo}}">
+        <view class="qq-card-header">
+          <text class="qq-title">欢迎来到 Mini-IM</text>
+          <text class="qq-subtitle">完善头像与昵称，开启聊天</text>
+        </view>
+
+        <button class="qq-avatar-btn" open-type="chooseAvatar" bind:chooseavatar="onChooseAvatar">
+          <view class="qq-avatar-wrap">
+            <image class="qq-avatar" src="{{userInfo.avatarUrl}}" mode="cover"></image>
+            <view class="qq-avatar-ring"></view>
+            <view class="qq-status-dot"></view>
+          </view>
+          <text class="qq-avatar-tip">点击上传头像</text>
+        </button>
+
+        <view class="qq-field">
+          <text class="qq-label">昵称</text>
+          <input
+            type="nickname"
+            class="qq-input"
+            placeholder="请输入昵称"
+            placeholder-class="qq-placeholder"
+            bind:change="onInputChange"
+          />
+        </view>
+
+        <button wx:if="{{canIUseGetUserProfile}}" class="qq-btn" hover-class="qq-btn--hover" bindtap="getUserProfile">
+          登录 / 获取头像昵称
+        </button>
+        <view wx:else class="qq-note">
+          <text class="qq-note-text">请使用 2.10.4 及以上版本基础库</text>
+        </view>
+      </block>
+
+      <block wx:elif="{{!hasUserInfo}}">
+        <view class="qq-card-header center">
+          <text class="qq-title">欢迎来到 Mini-IM</text>
+          <text class="qq-subtitle">登录后即可进入聊天</text>
+        </view>
+
+        <button wx:if="{{canIUseGetUserProfile}}" class="qq-btn" hover-class="qq-btn--hover" bindtap="getUserProfile">
+          一键登录
+        </button>
+        <view wx:else class="qq-note">
+          <text class="qq-note-text">请使用 2.10.4 及以上版本基础库</text>
+        </view>
+      </block>
+
+      <block wx:else>
+        <view class="qq-profile">
+          <view class="qq-avatar-wrap large" bindtap="bindViewTap">
+            <image class="qq-avatar" src="{{userInfo.avatarUrl}}" mode="cover"></image>
+            <view class="qq-avatar-ring"></view>
+            <view class="qq-status-dot"></view>
+          </view>
+
+          <view class="qq-profile-meta">
+            <view class="qq-name-row">
+              <text class="qq-name">{{userInfo.nickName}}</text>
+              <view class="qq-badge">
+                <text class="qq-badge-text">SVIP</text>
+              </view>
+              <view class="qq-level">
+                <text class="qq-level-text">LV.7</text>
+              </view>
+            </view>
+            <text class="qq-desc">在线 · 随时开聊</text>
+          </view>
+        </view>
+
+        <view class="qq-quick">
+          <view class="qq-quick-item">
+            <text class="qq-quick-title">消息</text>
+            <text class="qq-quick-sub">即时沟通</text>
+          </view>
+          <view class="qq-quick-item">
+            <text class="qq-quick-title">联系人</text>
+            <text class="qq-quick-sub">好友 / 群聊</text>
+          </view>
+          <view class="qq-quick-item">
+            <text class="qq-quick-title">空间</text>
+            <text class="qq-quick-sub">动态互动</text>
+          </view>
+        </view>
+
+        <button class="qq-btn" hover-class="qq-btn--hover" bindtap="bindViewTap">进入</button>
+      </block>
+    </view>
+
+    <view class="qq-footer">
+      <text class="qq-footer-text">{{motto}}</text>
+    </view>
+  </view>
+</view>

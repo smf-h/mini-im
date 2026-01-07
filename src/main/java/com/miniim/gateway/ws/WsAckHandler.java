@@ -30,6 +30,7 @@ public class WsAckHandler {
     private final MessageService messageService;
     private final SingleChatMemberService singleChatMemberService;
     private final GroupMemberMapper groupMemberMapper;
+    private final WsPushService wsPushService;
     private final WsWriter wsWriter;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
@@ -87,12 +88,7 @@ public class WsAckHandler {
                     ack.serverMsgId = messageEntity.getServerMsgId();
                     ack.ackType = ackType.getDesc();
                     ack.ts = Instant.now().toEpochMilli();
-                    for (Channel ch : sessionRegistry.getChannels(senderUserId)) {
-                        if (ch == null || !ch.isActive()) {
-                            continue;
-                        }
-                        wsWriter.write(ch, ack);
-                    }
+                    wsPushService.pushToUser(senderUserId, ack);
                 }
                 return;
             }
@@ -126,7 +122,7 @@ public class WsAckHandler {
             long id = Long.parseLong(serverMsgId);
             entity = messageService.getById(id);
         } catch (NumberFormatException ignore) {
-            // fallthrough
+            // serverMsgId 可能不是数字（例如使用自定义 serverMsgId）；走下面按 serverMsgId 查询的兜底逻辑
         }
         if (entity == null) {
             entity = messageService.getOne(new LambdaQueryWrapper<MessageEntity>()
