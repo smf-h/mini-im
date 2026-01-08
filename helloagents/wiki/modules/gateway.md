@@ -12,7 +12,7 @@
 - 通用写出：`com.miniim.gateway.ws.WsWriter`（统一序列化、`ERROR/ACK` 回包，并保证写入在目标 channel eventLoop 执行）
 - 发送者顺序保障：`com.miniim.gateway.ws.WsChannelSerialQueue`（per-channel Future 链；保证同一连接的业务处理串行，避免“发送者乱序”）
 - AUTH/REAUTH：`com.miniim.gateway.ws.WsAuthHandler`（认证与续期；AUTH 成功触发补发，单连接仅一次）
-- PING/PONG：`com.miniim.gateway.ws.WsPingHandler`（客户端 ping 回 pong；writer-idle 发送 JSON ping；并在心跳路径复验 `sessionVersion` 以保证“最终必失效”）
+- PING/PONG：`com.miniim.gateway.ws.WsPingHandler`（客户端 JSON ping 回 JSON pong；writer-idle 发送 WS ping + JSON ping，并在心跳路径复验 `sessionVersion` 以保证“最终必失效”）
 - 单聊消息：`com.miniim.gateway.ws.WsSingleChatHandler`（`SINGLE_CHAT`：幂等 claim + 落库 ACK(saved) + best-effort 下发）
 - 群聊消息：`com.miniim.gateway.ws.WsGroupChatHandler`（`GROUP_CHAT`：成员校验/禁言校验 + mention/reply 落库；下发由 `GroupChatDispatchService` 统一负责）
 - 消息撤回：`com.miniim.gateway.ws.WsMessageRevokeHandler`（`MESSAGE_REVOKE`：仅发送者 + 2分钟窗口；成功后回 `ACK(revoked)` 并广播 `MESSAGE_REVOKED`）

@@ -4,6 +4,7 @@ import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -60,6 +61,12 @@ public class WsPingHandler {
                 return;
             }
             sessionRegistry.touch(ch);
+        }
+        // WS 层 ping：触发客户端自动回 pong，用于“读空闲”检测与 NAT 保活（客户端无感知）。
+        try {
+            ctx.writeAndFlush(new PingWebSocketFrame());
+        } catch (Exception ignore) {
+            // ignore
         }
         WsEnvelope ping = new WsEnvelope();
         ping.type = "PING";

@@ -117,9 +117,10 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new HttpObjectAggregator(65536));
 //                        p.addLast(new LoggingHandler(LogLevel.INFO));
 
-                        // 3) 空闲检测：writerIdle 间隔内“没有写任何数据”就触发 WRITER_IDLE
-                        //    用途：触发业务层心跳（我们这里会触发 JSON PING，并刷新在线路由 TTL）
-                        p.addLast(new IdleStateHandler(0, 60, 0));
+                        // 3) 空闲检测：
+                        //    - readerIdle：一段时间内没有读到任何数据（包含 WS 层 pong），用于清理“僵尸连接”
+                        //    - writerIdle：一段时间内没有写任何数据，用于触发心跳与在线 TTL 续期
+                        p.addLast(new IdleStateHandler(90, 60, 0));
 
                         // 4) 握手鉴权：在 HTTP Upgrade 阶段校验 accessToken，并把 userId/exp 绑定到 channel
                         p.addLast(new WsHandshakeAuthHandler(
