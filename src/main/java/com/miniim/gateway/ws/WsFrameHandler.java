@@ -7,6 +7,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.util.AttributeKey;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,20 @@ import java.time.Instant;
 public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFrame> {
 
     private static final long SV_REVALIDATE_MIN_INTERVAL_MS = 3_000;
+    private static final long BAD_JSON_WINDOW_MS = 10_000;
+    private static final int BAD_JSON_MAX_IN_WINDOW = 3;
+
+    // 连接级限流：用于保护 objectMapper 解析与日志（只看 TextWebSocketFrame 到达速率）。
+    private static final int CONN_RATE_PER_SEC = 60;
+    private static final int CONN_RATE_BURST = 120;
+
+    // 用户级限流：用于保护业务侧（DB/缓存/群发 fanout）。
+    private static final int USER_RATE_PER_SEC = 30;
+    private static final int USER_RATE_BURST = 60;
+
+    private static final AttributeKey<TokenBucket> ATTR_CONN_BUCKET = AttributeKey.valueOf("im_ws_conn_bucket");
+    private static final AttributeKey<ViolationWindow> ATTR_BAD_JSON_WINDOW = AttributeKey.valueOf("im_ws_bad_json");
+    private static final AttributeKey<TokenBucket> ATTR_USER_BUCKET = AttributeKey.valueOf("im_ws_user_bucket");
 
     private final ObjectMapper objectMapper;
     private final SessionRegistry sessionRegistry;
@@ -58,6 +73,12 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) throws Exception {
+        if (!consumeConnToken(ctx)) {
+            wsWriter.writeError(ctx, "too_many_requests", null, null);
+            ctx.close();
+            return;
+        }
+
         // 我们约定：客户端发来的每一个 TextWebSocketFrame 都是一段 JSON
         // 用 WsEnvelope 这个“信封对象”承载：type + token + from/to + body + ts ...
         String raw = frame.text();
@@ -80,11 +101,17 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             }
         } catch (Exception e) {
             wsWriter.writeError(ctx, "bad_json", null, null);
+            if (!recordBadJsonAndShouldKeep(ctx)) {
+                ctx.close();
+            }
             return;
         }
 
         if (msg.type == null) {
             wsWriter.writeError(ctx, "missing_type", null, null);
+            if (!recordBadJsonAndShouldKeep(ctx)) {
+                ctx.close();
+            }
             return;
         }
 
@@ -101,6 +128,15 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                 return;
             }
             if (!revalidateSessionVersionIfNeeded(ctx, msg)) {
+                return;
+            }
+        }
+
+        // 业务类消息做用户级限流；心跳/鉴权/续期不参与（避免误伤弱网重连/续期）。
+        if (shouldApplyUserLimit(msg.type) && sessionRegistry.isAuthed(ctx.channel())) {
+            if (!consumeUserToken(ctx)) {
+                wsWriter.writeError(ctx, "too_many_requests", msg.getClientMsgId(), msg.getServerMsgId());
+                ctx.close();
                 return;
             }
         }
@@ -123,6 +159,9 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             case "CALL_ICE" -> wsCallHandler.handleIce(ctx, msg);
             default -> {
                 wsWriter.writeError(ctx, "not_implemented", msg.getClientMsgId(), null);
+                if (!recordBadJsonAndShouldKeep(ctx)) {
+                    ctx.close();
+                }
             }
         }
     }
@@ -151,6 +190,90 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private boolean isExpired(Channel ch) {
         Long expMs = sessionRegistry.getAccessExpMs(ch);
         return expMs != null && Instant.now().toEpochMilli() >= expMs;
+    }
+
+    private static boolean shouldApplyUserLimit(String type) {
+        if (type == null) {
+            return true;
+        }
+        return !("PING".equals(type) || "PONG".equals(type) || "AUTH".equals(type) || "REAUTH".equals(type));
+    }
+
+    private static boolean recordBadJsonAndShouldKeep(ChannelHandlerContext ctx) {
+        Channel ch = ctx.channel();
+        long now = System.currentTimeMillis();
+        ViolationWindow win = ch.attr(ATTR_BAD_JSON_WINDOW).get();
+        if (win == null || now - win.windowStartMs >= BAD_JSON_WINDOW_MS) {
+            win = new ViolationWindow(now, 0);
+        }
+        win.count++;
+        ch.attr(ATTR_BAD_JSON_WINDOW).set(win);
+        return win.count <= BAD_JSON_MAX_IN_WINDOW;
+    }
+
+    private static boolean consumeConnToken(ChannelHandlerContext ctx) {
+        return consumeToken(ctx.channel(), ATTR_CONN_BUCKET, CONN_RATE_PER_SEC, CONN_RATE_BURST);
+    }
+
+    private static boolean consumeUserToken(ChannelHandlerContext ctx) {
+        return consumeToken(ctx.channel(), ATTR_USER_BUCKET, USER_RATE_PER_SEC, USER_RATE_BURST);
+    }
+
+    private static boolean consumeToken(Channel ch,
+                                        AttributeKey<TokenBucket> key,
+                                        int ratePerSec,
+                                        int burst) {
+        if (ch == null) {
+            return false;
+        }
+        long nowNs = System.nanoTime();
+        TokenBucket b = ch.attr(key).get();
+        if (b == null) {
+            b = new TokenBucket(burst, nowNs);
+        } else {
+            refill(b, nowNs, ratePerSec, burst);
+        }
+        if (b.tokens <= 0) {
+            ch.attr(key).set(b);
+            return false;
+        }
+        b.tokens--;
+        ch.attr(key).set(b);
+        return true;
+    }
+
+    private static void refill(TokenBucket b, long nowNs, int ratePerSec, int burst) {
+        long elapsedNs = nowNs - b.lastRefillNs;
+        if (elapsedNs <= 0) {
+            return;
+        }
+        long add = (elapsedNs * (long) ratePerSec) / 1_000_000_000L;
+        if (add <= 0) {
+            return;
+        }
+        b.tokens = (int) Math.min(burst, (long) b.tokens + add);
+        long consumedNs = (add * 1_000_000_000L) / Math.max(1L, ratePerSec);
+        b.lastRefillNs += consumedNs;
+    }
+
+    private static final class TokenBucket {
+        int tokens;
+        long lastRefillNs;
+
+        TokenBucket(int tokens, long lastRefillNs) {
+            this.tokens = tokens;
+            this.lastRefillNs = lastRefillNs;
+        }
+    }
+
+    private static final class ViolationWindow {
+        final long windowStartMs;
+        int count;
+
+        ViolationWindow(long windowStartMs, int count) {
+            this.windowStartMs = windowStartMs;
+            this.count = count;
+        }
     }
 
     /**

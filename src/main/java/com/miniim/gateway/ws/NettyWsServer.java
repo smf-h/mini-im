@@ -140,6 +140,7 @@ public class NettyWsServer implements SmartLifecycle {
                                 .websocketPath(props.path())
                                 .checkStartsWith(true)
                                 .allowExtensions(true)
+                                .maxFramePayloadLength(65536)
                                 .build();
                         p.addLast(new WebSocketServerProtocolHandler(wsConfig));
 

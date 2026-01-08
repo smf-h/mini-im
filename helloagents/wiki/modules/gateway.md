@@ -36,6 +36,7 @@
 
 ## 约定（v1）
 - WsFrameHandler 尽量只做：协议解析/鉴权门禁/路由分发；AUTH/PING/通用写出与业务逻辑分别下沉到独立组件。
+- WS 稳定性：WsFrameHandler 对入站帧做轻量限流（连接级 + 用户级）并对 `bad_json/missing_type` 等协议违规做阈值断连，避免被刷包拖垮网关。
 - `CALL_*` 相关逻辑集中在 `WsCallHandler`：包含好友校验/占用/超时/落库/转发；WsFrameHandler 只负责分发。
 - ACK 语义：发送方 ACK(SAVED) 代表落库成功；接收方 ACK_RECEIVED 代表已收到（用于推进消息状态）。
 - WebRTC 单聊通话（Phase1）：gateway 仅负责 WS 信令（`CALL_*`）转发与通话状态占用（busy/timeout）管理，SDP/ICE 不应写入日志。
