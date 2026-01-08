@@ -84,7 +84,7 @@ public class WsHandshakeAuthHandler extends SimpleChannelInboundHandler<FullHttp
             }
             Long expMs = claims.getExpiration() == null ? null : claims.getExpiration().getTime();
 
-            sessionRegistry.bind(ctx.channel(), userId, expMs);
+            sessionRegistry.bind(ctx.channel(), userId, expMs, sv);
             afterAuthed(userId, ctx);
             ctx.fireChannelRead(req.retain());
         } catch (Exception e) {

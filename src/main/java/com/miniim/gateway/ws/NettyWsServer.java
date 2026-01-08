@@ -149,6 +149,7 @@ public class NettyWsServer implements SmartLifecycle {
                                 wsWriter,
                                 wsAuthHandler,
                                 wsPingHandler,
+                                sessionVersionStore,
                                 wsCallHandler,
                                 wsAckHandler,
                                 wsFriendRequestHandler,

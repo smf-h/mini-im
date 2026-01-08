@@ -55,6 +55,7 @@
 
 ### 修复
 - WS：允许 `/ws?token=...`（query token）握手，修复浏览器端连接卡住导致 `auth_timeout`
+- WS：连接存活期间对 `sessionVersion` 做按连接限频复验，并在心跳路径（client ping / writer-idle）检测失效连接，降低 Pub/Sub 丢 KICK 时“旧连接继续存活”的风险
 - WS：避免重复 `AUTH` 导致重复离线补发（同一连接仅补发一次），补齐补发失败日志上下文；`WsCron` 调度间隔配置对齐为 `im.cron.resend.fixed-delay-ms` 并兼容旧 `im.cron.scan-dropped.fixed-delay-ms`
 - WS：补发逻辑抽离为 `WsResendService`，`WsFrameHandler/WsCron` 仅负责门禁与调度，减少重复代码
 - WS：`CALL_*` 信令处理抽离为 `WsCallHandler`（占用/超时/落库/转发），进一步瘦身 `WsFrameHandler`

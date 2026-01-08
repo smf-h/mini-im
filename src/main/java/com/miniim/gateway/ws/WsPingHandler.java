@@ -1,5 +1,6 @@
 package com.miniim.gateway.ws;
 
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -20,6 +21,7 @@ import java.time.Instant;
 public class WsPingHandler {
 
     private final SessionRegistry sessionRegistry;
+    private final SessionVersionStore sessionVersionStore;
     private final WsWriter wsWriter;
 
     public void handleClientPing(ChannelHandlerContext ctx) {
@@ -34,6 +36,12 @@ public class WsPingHandler {
             ctx.close();
             return;
         }
+        if (!isSessionValid(ch)) {
+            wsWriter.writeError(ctx, "session_invalid", null, null);
+            sessionRegistry.unbind(ch);
+            ctx.close();
+            return;
+        }
         sessionRegistry.touch(ch);
 
         WsEnvelope pong = new WsEnvelope();
@@ -45,6 +53,12 @@ public class WsPingHandler {
     public void onWriterIdle(ChannelHandlerContext ctx) {
         Channel ch = ctx.channel();
         if (sessionRegistry.isAuthed(ch) && !isExpired(ch)) {
+            if (!isSessionValid(ch)) {
+                wsWriter.writeError(ch, "session_invalid", null, null);
+                sessionRegistry.unbind(ch);
+                ctx.close();
+                return;
+            }
             sessionRegistry.touch(ch);
         }
         WsEnvelope ping = new WsEnvelope();
@@ -57,5 +71,13 @@ public class WsPingHandler {
         Long expMs = sessionRegistry.getAccessExpMs(ch);
         return expMs != null && Instant.now().toEpochMilli() >= expMs;
     }
-}
 
+    private boolean isSessionValid(Channel ch) {
+        Long userId = ch.attr(SessionRegistry.ATTR_USER_ID).get();
+        Long sv = ch.attr(SessionRegistry.ATTR_SESSION_VERSION).get();
+        if (userId == null || sv == null) {
+            return true;
+        }
+        return sessionVersionStore.isValid(userId, sv);
+    }
+}

@@ -69,7 +69,7 @@ public class WsAuthHandler {
                 return;
             }
             Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
-            sessionRegistry.bind(ch, userId, expMs);
+            sessionRegistry.bind(ch, userId, expMs, sv);
             wsWriter.write(ctx, authOk(userId));
         } catch (Exception e) {
             wsWriter.write(ctx, authFail("invalid_token"));
@@ -123,7 +123,7 @@ public class WsAuthHandler {
             }
 
             Long expMs = jws.getPayload().getExpiration() == null ? null : jws.getPayload().getExpiration().getTime();
-            sessionRegistry.bind(ch, uid, expMs);
+            sessionRegistry.bind(ch, uid, expMs, sv);
             wsWriter.write(ctx, authOk(uid));
         } catch (Exception e) {
             wsWriter.write(ctx, authFail("invalid_token"));

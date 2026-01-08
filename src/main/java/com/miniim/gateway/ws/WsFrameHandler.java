@@ -1,6 +1,7 @@
 package com.miniim.gateway.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -15,11 +16,14 @@ import java.time.Instant;
 @Slf4j
 public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFrame> {
 
+    private static final long SV_REVALIDATE_MIN_INTERVAL_MS = 3_000;
+
     private final ObjectMapper objectMapper;
     private final SessionRegistry sessionRegistry;
     private final WsWriter wsWriter;
     private final WsAuthHandler wsAuthHandler;
     private final WsPingHandler wsPingHandler;
+    private final SessionVersionStore sessionVersionStore;
     private final WsCallHandler wsCallHandler;
     private final WsAckHandler wsAckHandler;
     private final WsFriendRequestHandler wsFriendRequestHandler;
@@ -31,6 +35,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                           WsWriter wsWriter,
                           WsAuthHandler wsAuthHandler,
                           WsPingHandler wsPingHandler,
+                          SessionVersionStore sessionVersionStore,
                           WsCallHandler wsCallHandler,
                           WsAckHandler wsAckHandler,
                           WsFriendRequestHandler wsFriendRequestHandler,
@@ -42,6 +47,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         this.wsWriter = wsWriter;
         this.wsAuthHandler = wsAuthHandler;
         this.wsPingHandler = wsPingHandler;
+        this.sessionVersionStore = sessionVersionStore;
         this.wsCallHandler = wsCallHandler;
         this.wsAckHandler = wsAckHandler;
         this.wsFriendRequestHandler = wsFriendRequestHandler;
@@ -94,12 +100,16 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
                 ctx.close();
                 return;
             }
+            if (!revalidateSessionVersionIfNeeded(ctx, msg)) {
+                return;
+            }
         }
 
         switch (msg.type) {
             case "AUTH" -> wsAuthHandler.handleAuth(ctx, msg);
             case "REAUTH" -> wsAuthHandler.handleReauth(ctx, msg);
             case "PING" -> wsPingHandler.handleClientPing(ctx);
+            case "PONG" -> sessionRegistry.touch(ctx.channel());
             case "SINGLE_CHAT" -> wsSingleChatHandler.handle(ctx, msg);
             case "GROUP_CHAT" -> wsGroupChatHandler.handle(ctx, msg);
             case "FRIEND_REQUEST" -> wsFriendRequestHandler.handle(ctx, msg);
@@ -141,6 +151,34 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
     private boolean isExpired(Channel ch) {
         Long expMs = sessionRegistry.getAccessExpMs(ch);
         return expMs != null && Instant.now().toEpochMilli() >= expMs;
+    }
+
+    /**
+     * 连接存活期间的“轻量硬校验”
+     * - 按连接限频复验 sessionVersion，降低 Redis 压力
+     * - Redis 异常时 SessionVersionStore 内部 fail-open
+     */
+    private boolean revalidateSessionVersionIfNeeded(ChannelHandlerContext ctx, WsEnvelope msg) {
+        Channel ch = ctx.channel();
+        Long userId = ch.attr(SessionRegistry.ATTR_USER_ID).get();
+        Long tokenSv = ch.attr(SessionRegistry.ATTR_SESSION_VERSION).get();
+        if (userId == null || tokenSv == null) {
+            return true;
+        }
+
+        long now = System.currentTimeMillis();
+        Long last = ch.attr(SessionRegistry.ATTR_LAST_SV_CHECK_MS).get();
+        if (last != null && now - last < SV_REVALIDATE_MIN_INTERVAL_MS) {
+            return true;
+        }
+        ch.attr(SessionRegistry.ATTR_LAST_SV_CHECK_MS).set(now);
+
+        if (sessionVersionStore.isValid(userId, tokenSv)) {
+            return true;
+        }
+        wsWriter.writeError(ctx, "session_invalid", msg.getClientMsgId(), msg.getServerMsgId());
+        ctx.close();
+        return false;
     }
 
     @Override

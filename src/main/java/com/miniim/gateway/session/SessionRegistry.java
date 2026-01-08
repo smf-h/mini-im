@@ -21,6 +21,8 @@ public class SessionRegistry {
     public static final AttributeKey<Long> ATTR_USER_ID = AttributeKey.valueOf("uid");
     public static final AttributeKey<Long> ATTR_ACCESS_EXP_MS = AttributeKey.valueOf("aexp");
     public static final AttributeKey<String> ATTR_CONN_ID = AttributeKey.valueOf("cid");
+    public static final AttributeKey<Long> ATTR_SESSION_VERSION = AttributeKey.valueOf("sv");
+    public static final AttributeKey<Long> ATTR_LAST_SV_CHECK_MS = AttributeKey.valueOf("sv_chk_ms");
 
     private static final Duration ROUTE_TTL = Duration.ofSeconds(120);
 
@@ -47,12 +49,19 @@ public class SessionRegistry {
     }
 
     public String bind(Channel ch, long userId, Long accessExpMs) {
+        return bind(ch, userId, accessExpMs, null);
+    }
+
+    public String bind(Channel ch, long userId, Long accessExpMs, Long sessionVersion) {
         String connId = ensureConnId(ch);
         userChannels.computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
                 .put(ch.id().asShortText(), ch);
 
         ch.attr(ATTR_USER_ID).set(userId);
         ch.attr(ATTR_ACCESS_EXP_MS).set(accessExpMs);
+        if (sessionVersion != null) {
+            ch.attr(ATTR_SESSION_VERSION).set(sessionVersion);
+        }
         channelIdToUserId.put(ch.id().asShortText(), userId);
         return connId;
     }
