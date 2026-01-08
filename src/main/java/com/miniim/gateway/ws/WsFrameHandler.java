@@ -17,15 +17,33 @@ import java.time.Instant;
 @Slf4j
 public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFrame> {
 
+    /**
+     * sessionVersion 复验最小间隔：用于把“控制面最终必生效”做成连接存活期的硬门禁，
+     * 但避免每条业务消息都打 Redis（限频复验）。
+     */
     private static final long SV_REVALIDATE_MIN_INTERVAL_MS = 3_000;
+
+    /**
+     * 协议违规窗口：在一个短窗口内多次发送非法包（bad_json/missing_type/unknown_type）则断开连接。
+     * <p>
+     * 目的：防刷包、防日志放大、保护 objectMapper 解析与业务线程池。
+     */
     private static final long BAD_JSON_WINDOW_MS = 10_000;
     private static final int BAD_JSON_MAX_IN_WINDOW = 3;
 
-    // 连接级限流：用于保护 objectMapper 解析与日志（只看 TextWebSocketFrame 到达速率）。
+    /**
+     * 连接级限流：只看 TextWebSocketFrame 的到达速率，保护 JSON 解析与日志。
+     * <p>
+     * 注意：这是“网关保护阈值”，不是业务语义。
+     */
     private static final int CONN_RATE_PER_SEC = 60;
     private static final int CONN_RATE_BURST = 120;
 
-    // 用户级限流：用于保护业务侧（DB/缓存/群发 fanout）。
+    /**
+     * 用户级限流：对业务类消息限频，保护 DB/缓存/群发 fanout。
+     * <p>
+     * 不对 AUTH/REAUTH/PING/PONG 做限流：避免弱网重连/续期/心跳被误伤。
+     */
     private static final int USER_RATE_PER_SEC = 30;
     private static final int USER_RATE_BURST = 60;
 
@@ -73,6 +91,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, TextWebSocketFrame frame) throws Exception {
+        // 连接级限流：最先执行，避免恶意/异常连接刷爆解析和日志。
         if (!consumeConnToken(ctx)) {
             wsWriter.writeError(ctx, "too_many_requests", null, null);
             ctx.close();
@@ -101,6 +120,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             }
         } catch (Exception e) {
             wsWriter.writeError(ctx, "bad_json", null, null);
+            // 解析失败也要计入违规：短时间多次 bad_json 直接断开。
             if (!recordBadJsonAndShouldKeep(ctx)) {
                 ctx.close();
             }
@@ -109,6 +129,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
 
         if (msg.type == null) {
             wsWriter.writeError(ctx, "missing_type", null, null);
+            // 缺字段属于协议违规：短时间多次直接断开。
             if (!recordBadJsonAndShouldKeep(ctx)) {
                 ctx.close();
             }
@@ -159,6 +180,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             case "CALL_ICE" -> wsCallHandler.handleIce(ctx, msg);
             default -> {
                 wsWriter.writeError(ctx, "not_implemented", msg.getClientMsgId(), null);
+                // 未实现的 type 同样计入协议违规：避免客户端 bug/探测刷爆网关。
                 if (!recordBadJsonAndShouldKeep(ctx)) {
                     ctx.close();
                 }
@@ -226,6 +248,7 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         if (ch == null) {
             return false;
         }
+        // 用 nanoTime 计算时间差，避免系统时间调整导致的突刺/负值。
         long nowNs = System.nanoTime();
         TokenBucket b = ch.attr(key).get();
         if (b == null) {
@@ -247,11 +270,13 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
         if (elapsedNs <= 0) {
             return;
         }
+        // 按固定速率补充 token，最大不超过 burst。
         long add = (elapsedNs * (long) ratePerSec) / 1_000_000_000L;
         if (add <= 0) {
             return;
         }
         b.tokens = (int) Math.min(burst, (long) b.tokens + add);
+        // 把“已经折算成 token 的时间”从 lastRefillNs 中扣掉，减少累计误差。
         long consumedNs = (add * 1_000_000_000L) / Math.max(1L, ratePerSec);
         b.lastRefillNs += consumedNs;
     }

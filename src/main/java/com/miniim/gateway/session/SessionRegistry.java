@@ -21,7 +21,19 @@ public class SessionRegistry {
     public static final AttributeKey<Long> ATTR_USER_ID = AttributeKey.valueOf("uid");
     public static final AttributeKey<Long> ATTR_ACCESS_EXP_MS = AttributeKey.valueOf("aexp");
     public static final AttributeKey<String> ATTR_CONN_ID = AttributeKey.valueOf("cid");
+
+    /**
+     * 会话版本号（JWT claim: sv）。
+     * <p>
+     * 用于“新登录使旧 token 立即失效”：连接建立时绑定到 channel，后续可在心跳/业务消息路径做轻量复验。
+     */
     public static final AttributeKey<Long> ATTR_SESSION_VERSION = AttributeKey.valueOf("sv");
+
+    /**
+     * 上次复验 sessionVersion 的时间戳（毫秒）。
+     * <p>
+     * 目的：按连接限频访问 Redis，避免“每条消息都查 Redis”。
+     */
     public static final AttributeKey<Long> ATTR_LAST_SV_CHECK_MS = AttributeKey.valueOf("sv_chk_ms");
 
     private static final Duration ROUTE_TTL = Duration.ofSeconds(120);

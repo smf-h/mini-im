@@ -140,6 +140,7 @@ public class NettyWsServer implements SmartLifecycle {
                                 .websocketPath(props.path())
                                 .checkStartsWith(true)
                                 .allowExtensions(true)
+                                // 限制单个 WS 文本帧最大 payload：避免超大 JSON 帧导致内存/GC 抖动与解析开销放大。
                                 .maxFramePayloadLength(65536)
                                 .build();
                         p.addLast(new WebSocketServerProtocolHandler(wsConfig));

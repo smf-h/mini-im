@@ -62,7 +62,9 @@ public class WsPingHandler {
             }
             sessionRegistry.touch(ch);
         }
-        // WS 层 ping：触发客户端自动回 pong，用于“读空闲”检测与 NAT 保活（客户端无感知）。
+        // WS 层 ping：触发客户端自动回 pong，用于：
+        // 1) NAT/中间设备保活（避免长连接被静默回收）
+        // 2) 配合 reader-idle：让“正常在线”连接持续有读事件；僵尸连接则会触发 READER_IDLE 清理
         try {
             ctx.writeAndFlush(new PingWebSocketFrame());
         } catch (Exception ignore) {
