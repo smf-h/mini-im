@@ -42,6 +42,9 @@
   - 默认不会跑 `500000`（单机高概率会把本机压测端先打挂）；如确实要尝试，可加 `-Run500k`（风险自担）
   - 默认会从 **User-level 环境变量** 补齐 `IM_MYSQL_PASSWORD`（避免“每次开新 PowerShell 进程变量丢失”）
   - 输出目录：`logs/ws-cluster-5x-test_YYYYMMDD_HHMMSS/`（内含每一步 JSON 与每个实例日志）
+  - 单机多实例建议保持 `AutoTuneLocalThreads=true`（默认开启）：会按实例数自动对齐 Netty worker 线程、DB executor、JDBC 连接池等，避免“实例数上去→线程数爆炸→DB 排队超时→ERROR internal_error”
+  - 口径对齐：可用 `-LoadDrainMs 5000`（或更大）在停止发送后保留连接一段时间，确保 `orTimeout(3s)` 触发的 `ERROR` 不会被“提前关连接”掩盖
+  - 快速回归：可用 `-SkipGroup` 跳过群聊压测（只测 connect/ping/single_e2e），用于做实例数 sweep（例如 5~9）时节省时间
 
 ### 群聊 push 压测（含乱序/重复统计）
 

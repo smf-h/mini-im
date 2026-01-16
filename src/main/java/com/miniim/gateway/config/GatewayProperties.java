@@ -8,7 +8,9 @@ public record GatewayProperties(
         String host,
         int port,
         String path,
-        String instanceId
+        String instanceId,
+        Integer bossThreads,
+        Integer workerThreads
 ) {
 
     private static final String RUNTIME_INSTANCE_SUFFIX = UUID.randomUUID()
@@ -25,5 +27,21 @@ public record GatewayProperties(
             h = "unknown";
         }
         return h + ":" + port + ":" + RUNTIME_INSTANCE_SUFFIX;
+    }
+
+    public int bossThreadsEffective() {
+        Integer v = bossThreads;
+        if (v == null || v <= 0) {
+            return 1;
+        }
+        return v;
+    }
+
+    public Integer workerThreadsEffectiveOrNull() {
+        Integer v = workerThreads;
+        if (v == null || v <= 0) {
+            return null;
+        }
+        return v;
     }
 }

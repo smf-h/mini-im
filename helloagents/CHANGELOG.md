@@ -107,6 +107,9 @@
 - 单聊：发送主链路移除 `ensureMembers()`（减少每消息 2 次 exists read），delivered/read ACK 改为“优先 update，缺行再补建兜底”，将成员行从强依赖改为按需补齐
 - 单聊（实验性）：两级回执 `ACK(accepted/saved)` + Redis Streams 异步投递/落库（开关：`im.gateway.ws.single-chat.two-phase.*`；可选 `deliver-before-saved` 先投递后落库）
 - 测试：`ws-cluster-5x-test` 的 `single_e2e_*_avg.json` 补齐 accepted/saved 分位数与 dup/reorder 汇总，并修复嵌套 PowerShell 进程触发的 conda 编码噪声
+- 网关：Netty worker/boss 线程数支持配置（`im.gateway.ws.worker-threads` / `im.gateway.ws.boss-threads`），便于单机多实例压测时避免线程数爆炸
+- 测试：`ws-cluster-5x-test` 支持 `AutoTuneLocalThreads/LoadDrainMs/SkipGroup`，并自动对齐 DB executor/JDBC 连接池/Netty worker 线程以减少 `ERROR internal_error`
+- 测试：Java 压测器输出 `errorsByReason` 并支持 `drainMs`，避免“提前关连接”掩盖 3s DB timeout 的错误统计
 
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 

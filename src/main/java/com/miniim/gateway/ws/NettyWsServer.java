@@ -102,8 +102,9 @@ public class NettyWsServer implements SmartLifecycle {
         // boss: 负责 accept 新连接；worker: 负责处理已建立连接的读写事件
         // 这里是最常见的 Netty 线程模型。
 
-        boss = new NioEventLoopGroup(1);
-        worker = new NioEventLoopGroup();
+        boss = new NioEventLoopGroup(props.bossThreadsEffective());
+        Integer workerThreads = props.workerThreadsEffectiveOrNull();
+        worker = (workerThreads == null) ? new NioEventLoopGroup() : new NioEventLoopGroup(workerThreads);
 
         ServerBootstrap b = new ServerBootstrap();
         b.group(boss, worker)

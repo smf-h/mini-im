@@ -32,6 +32,7 @@ param(
 
   [string]$AckStressTypes = "delivered,read",
   [int]$AckEveryN = 1
+  ,[int]$DrainMs = 1500
 )
 
 Set-StrictMode -Version Latest
@@ -72,6 +73,7 @@ if ($OpenLoop) {
 $args += @("--maxValidE2eMs", "$MaxValidE2eMs")
 $args += @("--ackStressTypes", "$AckStressTypes")
 $args += @("--ackEveryN", "$AckEveryN")
+$args += @("--drainMs", "$DrainMs")
 
 if ($WsUrls -and $WsUrls.Trim().Length -gt 0) {
   $args += @("--wsList", $WsUrls)

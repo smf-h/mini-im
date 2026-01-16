@@ -13,6 +13,7 @@ param(
   [switch]$SkipInfraCheck,
   [switch]$KeepProcesses,
   [switch]$SkipConnectLarge,
+  [switch]$SkipGroup,
  
   [long]$UserBase = 20000000,
   [bool]$AutoUserBase = $true,
@@ -21,9 +22,21 @@ param(
   [double]$PerfTraceSampleRate = 0.01,
   [switch]$PerfTraceFull,
 
+  [bool]$AutoTuneLocalThreads = $true,
+  [int]$NettyBossThreads = 1,
+  [int]$NettyWorkerThreads = 0,
+
   [int]$DbCorePoolSize = 8,
   [int]$DbMaxPoolSize = 32,
   [int]$DbQueueCapacity = 10000,
+
+  [int]$PostDbCorePoolSize = 0,
+  [int]$PostDbMaxPoolSize = 0,
+  [int]$PostDbQueueCapacity = 0,
+
+  [int]$AckCorePoolSize = 0,
+  [int]$AckMaxPoolSize = 0,
+  [int]$AckQueueCapacity = 0,
 
   [int]$JdbcMaxPoolSize = 0,
   [int]$JdbcMinIdle = 0,
@@ -47,6 +60,7 @@ param(
   [switch]$OpenLoop,
   [int]$MaxInflightHard = 200,
   [long]$MaxValidE2eMs = 600000,
+  [int]$LoadDrainMs = 1500,
 
   [bool]$AckBatchEnabled = $true,
   [int]$AckBatchWindowMs = 1000,
@@ -100,6 +114,38 @@ if ($AutoUserBase -and -not $PSBoundParameters.ContainsKey("UserBase")) {
   $UserBase = 20000000 + ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() * 1000)
 }
 Write-Host ("[meta] AutoUserBase={0}, UserBase={1}" -f $AutoUserBase, $UserBase)
+
+if ($AutoTuneLocalThreads) {
+  $cpu = [Environment]::ProcessorCount
+  $perInst = [Math]::Max(1, [Math]::Floor($cpu / [Math]::Max(1, $Instances)))
+  $suggestNettyWorker = [Math]::Max(1, [Math]::Min(4, $perInst))
+
+  # Keep total DB concurrency roughly stable across different instance counts on a single machine.
+  # Otherwise, scaling instances can accidentally shrink total JDBC connections and trigger db queue timeouts.
+  $targetDbTotal = [Math]::Max(8, [Math]::Min($cpu, 24))
+  $suggestDb = [Math]::Ceiling($targetDbTotal / [Math]::Max(1, $Instances))
+  $suggestDb = [Math]::Max(2, [Math]::Min(6, [int]$suggestDb))
+
+  if (-not $PSBoundParameters.ContainsKey("NettyBossThreads")) { $NettyBossThreads = 1 }
+  if (-not $PSBoundParameters.ContainsKey("NettyWorkerThreads") -and $NettyWorkerThreads -le 0) { $NettyWorkerThreads = $suggestNettyWorker }
+
+  if (-not $PSBoundParameters.ContainsKey("DbCorePoolSize")) { $DbCorePoolSize = $suggestDb }
+  if (-not $PSBoundParameters.ContainsKey("DbMaxPoolSize")) { $DbMaxPoolSize = $DbCorePoolSize }
+  if (-not $PSBoundParameters.ContainsKey("DbQueueCapacity")) { $DbQueueCapacity = 2000 }
+
+  if (-not $PSBoundParameters.ContainsKey("PostDbCorePoolSize") -and $PostDbCorePoolSize -le 0) { $PostDbCorePoolSize = [Math]::Max(1, [Math]::Min(2, $suggestDb)) }
+  if (-not $PSBoundParameters.ContainsKey("PostDbMaxPoolSize") -and $PostDbMaxPoolSize -le 0) { $PostDbMaxPoolSize = $PostDbCorePoolSize }
+  if (-not $PSBoundParameters.ContainsKey("PostDbQueueCapacity") -and $PostDbQueueCapacity -le 0) { $PostDbQueueCapacity = 2000 }
+
+  if (-not $PSBoundParameters.ContainsKey("AckCorePoolSize") -and $AckCorePoolSize -le 0) { $AckCorePoolSize = 2 }
+  if (-not $PSBoundParameters.ContainsKey("AckMaxPoolSize") -and $AckMaxPoolSize -le 0) { $AckMaxPoolSize = $AckCorePoolSize }
+  if (-not $PSBoundParameters.ContainsKey("AckQueueCapacity") -and $AckQueueCapacity -le 0) { $AckQueueCapacity = 2000 }
+
+  if (-not $PSBoundParameters.ContainsKey("JdbcMaxPoolSize") -and $JdbcMaxPoolSize -le 0) { $JdbcMaxPoolSize = $DbCorePoolSize }
+  if (-not $PSBoundParameters.ContainsKey("JdbcMinIdle") -and $JdbcMinIdle -le 0) { $JdbcMinIdle = [Math]::Min($JdbcMaxPoolSize, 2) }
+
+  Write-Host ("[meta] AutoTuneLocalThreads=true, cpu={0}, perInst={1}, nettyWorker={2}, db={3}, jdbcMax={4}, targetDbTotal={5}" -f $cpu, $perInst, $NettyWorkerThreads, $DbCorePoolSize, $JdbcMaxPoolSize, $targetDbTotal)
+}
 
 function Resolve-JavaExe([string]$JavaExe) {
   if (-not $JavaExe -or $JavaExe.Trim().Length -eq 0) { $JavaExe = "java" }
@@ -274,6 +320,8 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("--im.gateway.ws.host=127.0.0.1")
   [void]$argList.Add("--im.gateway.ws.port=$wsPort")
   [void]$argList.Add("--im.gateway.ws.instance-id=$instanceId")
+  [void]$argList.Add("--im.gateway.ws.boss-threads=$NettyBossThreads")
+  if ($NettyWorkerThreads -gt 0) { [void]$argList.Add("--im.gateway.ws.worker-threads=$NettyWorkerThreads") }
   [void]$argList.Add("--im.group-chat.strategy.mode=$GroupStrategyMode")
   [void]$argList.Add("--im.gateway.ws.perf-trace.enabled=true")
   [void]$argList.Add("--im.gateway.ws.perf-trace.slow-ms=$PerfTraceSlowMs")
@@ -281,6 +329,12 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("--im.executors.db.core-pool-size=$DbCorePoolSize")
   [void]$argList.Add("--im.executors.db.max-pool-size=$DbMaxPoolSize")
   [void]$argList.Add("--im.executors.db.queue-capacity=$DbQueueCapacity")
+  if ($PostDbCorePoolSize -gt 0) { [void]$argList.Add("--im.executors.post-db.core-pool-size=$PostDbCorePoolSize") }
+  if ($PostDbMaxPoolSize -gt 0) { [void]$argList.Add("--im.executors.post-db.max-pool-size=$PostDbMaxPoolSize") }
+  if ($PostDbQueueCapacity -gt 0) { [void]$argList.Add("--im.executors.post-db.queue-capacity=$PostDbQueueCapacity") }
+  if ($AckCorePoolSize -gt 0) { [void]$argList.Add("--im.executors.ack.core-pool-size=$AckCorePoolSize") }
+  if ($AckMaxPoolSize -gt 0) { [void]$argList.Add("--im.executors.ack.max-pool-size=$AckMaxPoolSize") }
+  if ($AckQueueCapacity -gt 0) { [void]$argList.Add("--im.executors.ack.queue-capacity=$AckQueueCapacity") }
   [void]$argList.Add("--im.gateway.ws.encode.enabled=$($WsEncodeEnabled.IsPresent.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.inbound-queue.enabled=$($InboundQueueEnabled.IsPresent.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.inbound-queue.max-pending-per-conn=$InboundQueueMaxPendingPerConn")
@@ -332,8 +386,8 @@ try {
   $wsUrls = ($instList | ForEach-Object { "ws://127.0.0.1:$($_.WsPort)/ws" }) -join ";"
   $http0 = "http://127.0.0.1:$($instList[0].HttpPort)"
   $ws0 = "ws://127.0.0.1:$($instList[0].WsPort)/ws"
-  $rolePinnedArg = @()
-  if ($instList.Count -ge 2) { $rolePinnedArg = @("-RolePinned") }
+  $rolePinnedSplat = @{}
+  if ($instList.Count -ge 2) { $rolePinnedSplat = @{ RolePinned = $true } }
 
   $results = [ordered]@{
     ok = $true
@@ -368,7 +422,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
   if ($instList.Count -ge 2) {
     try {
       $smokePath = Run-Step "smoke_cluster_2x" {
-        powershell -ExecutionPolicy Bypass -File "scripts/ws-cluster-smoke-test/run.ps1" -WsUrlA $ws0 -WsUrlB ("ws://127.0.0.1:$($instList[1].WsPort)/ws") -HttpBaseA $http0 -HttpBaseB ("http://127.0.0.1:$($instList[1].HttpPort)") -Password $Password -TimeoutMs 20000 -GroupStrategyMode $GroupStrategyMode
+        & "scripts/ws-cluster-smoke-test/run.ps1" -WsUrlA $ws0 -WsUrlB ("ws://127.0.0.1:$($instList[1].WsPort)/ws") -HttpBaseA $http0 -HttpBaseB ("http://127.0.0.1:$($instList[1].HttpPort)") -Password $Password -TimeoutMs 20000 -GroupStrategyMode $GroupStrategyMode
       }
       $results.smoke = $smokePath
     } catch {
@@ -388,7 +442,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
 
     try {
       $connectPath = Run-Step ("connect_" + $n) {
-        powershell -ExecutionPolicy Bypass -File "scripts/ws-load-test/run.ps1" -Mode connect -WsUrls $wsUrls @rolePinnedArg -Clients $n -DurationSeconds $DurationConnectSeconds -WarmupMs $WarmupMs -UserBase $UserBase
+        & "scripts/ws-load-test/run.ps1" -Mode connect -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationConnectSeconds -WarmupMs $WarmupMs -UserBase $UserBase -DrainMs 0
       }
       $level.connect = $connectPath
     } catch {
@@ -398,7 +452,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
     if ($n -le 5000) {
       try {
         $pingPath = Run-Step ("ping_" + $n) {
-          powershell -ExecutionPolicy Bypass -File "scripts/ws-load-test/run.ps1" -Mode ping -WsUrls $wsUrls @rolePinnedArg -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -PingIntervalMs $PingIntervalMs -UserBase $UserBase
+          & "scripts/ws-load-test/run.ps1" -Mode ping -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -PingIntervalMs $PingIntervalMs -UserBase $UserBase -DrainMs 0
         }
         $level.ping = $pingPath
       } catch {
@@ -418,10 +472,10 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
 
         $e2ePath = Run-StepRepeated ("single_e2e_" + $n) $repN {
           param($rep)
-          $ol = @()
-          if ($OpenLoop) { $ol = @("-OpenLoop", "-MaxInflightHard", $MaxInflightHard) }
+          $olSplat = @{}
+          if ($OpenLoop) { $olSplat = @{ OpenLoop = $true; MaxInflightHard = $MaxInflightHard } }
           $ub = $UserBase + ($rep * 1000000)
-          powershell -ExecutionPolicy Bypass -File "scripts/ws-load-test/run.ps1" -Mode single_e2e -WsUrls $wsUrls @rolePinnedArg -Clients $n -DurationSeconds $durN -WarmupMs $WarmupMs -MsgIntervalMs $MsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs @ol
+          & "scripts/ws-load-test/run.ps1" -Mode single_e2e -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $durN -WarmupMs $WarmupMs -MsgIntervalMs $MsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -DrainMs $LoadDrainMs @olSplat
         } {
           param($items)
           $p50 = ($items | ForEach-Object { $_.singleChat.e2eMs.p50 } | Measure-Object -Average).Average
@@ -474,10 +528,10 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
       $n = 5000
       $ackPath = Run-StepRepeated ("ack_stress_" + $n) $Repeats {
         param($rep)
-        $ol = @()
-        if ($OpenLoop) { $ol = @("-OpenLoop", "-MaxInflightHard", $AckStressMaxInflightHard) }
+        $olSplat = @{}
+        if ($OpenLoop) { $olSplat = @{ OpenLoop = $true; MaxInflightHard = $AckStressMaxInflightHard } }
         $ub = $UserBase + (9000000 + $rep * 1000000)
-        powershell -ExecutionPolicy Bypass -File "scripts/ws-load-test/run.ps1" -Mode ack_stress -WsUrls $wsUrls @rolePinnedArg -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $AckStressMsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -AckStressTypes $AckStressTypes -AckEveryN $AckEveryN @ol
+        & "scripts/ws-load-test/run.ps1" -Mode ack_stress -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $AckStressMsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -AckStressTypes $AckStressTypes -AckEveryN $AckEveryN -DrainMs $LoadDrainMs @olSplat
       } {
         param($items)
         [ordered]@{
@@ -497,13 +551,17 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
     }
   }
 
-  try {
-    $groupPath = Run-Step "group_push_e2e" {
-      powershell -ExecutionPolicy Bypass -File "scripts/ws-group-load-test/run.ps1" -WsUrls $wsUrls -HttpBase $http0 -Clients $GroupClients -Senders $GroupSenders -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $GroupMsgIntervalMs -Password $Password -ReceiverSamplePct $GroupReceiverSamplePct
+  if (-not $SkipGroup) {
+    try {
+      $groupPath = Run-Step "group_push_e2e" {
+        & "scripts/ws-group-load-test/run.ps1" -WsUrls $wsUrls -HttpBase $http0 -Clients $GroupClients -Senders $GroupSenders -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $GroupMsgIntervalMs -Password $Password -ReceiverSamplePct $GroupReceiverSamplePct
+      }
+      $results.group = $groupPath
+    } catch {
+      $results.groupError = $_.Exception.Message
     }
-    $results.group = $groupPath
-  } catch {
-    $results.groupError = $_.Exception.Message
+  } else {
+    $results.groupSkipped = $true
   }
 
   # Perf parse: per-instance summaries
@@ -512,7 +570,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
     for ($i = 0; $i -lt $instList.Count; $i++) {
       $gw = $i + 1
       $perfPath = Run-Step ("ws_perf_summary_gw" + $gw) {
-        powershell -ExecutionPolicy Bypass -File "scripts/ws-perf-tools/parse-ws-perf.ps1" -LogPath $instList[$i].OutLog -MaxLines 450000
+        & "scripts/ws-perf-tools/parse-ws-perf.ps1" -LogPath $instList[$i].OutLog -MaxLines 450000
       }
       $perfByInstance[("gw" + $gw)] = $perfPath
     }

@@ -65,6 +65,8 @@ public class WsLoadTest {
 
         String ackStressTypes = "delivered,read";
         int ackEveryN = 1;
+        boolean sendAckReceive = false;
+        int drainMs = 1500;
     }
 
     private static final class Metrics {
@@ -94,6 +96,10 @@ public class WsLoadTest {
         final AtomicLong e2eInvalid = new AtomicLong();
 
         final AtomicLong wsError = new AtomicLong();
+        final AtomicLong wsErrorRecvError = new AtomicLong();
+        final AtomicLong wsErrorOnError = new AtomicLong();
+        final AtomicLong wsErrorSendFail = new AtomicLong();
+        final ConcurrentHashMap<String, AtomicLong> wsErrorByReason = new ConcurrentHashMap<>();
 
         final AtomicLong msgAttempted = new AtomicLong();
         final AtomicLong msgSkippedHard = new AtomicLong();
@@ -194,6 +200,12 @@ public class WsLoadTest {
                 metrics.authFail.incrementAndGet();
             } else if ("ERROR".equals(type)) {
                 metrics.wsError.incrementAndGet();
+                metrics.wsErrorRecvError.incrementAndGet();
+                String reason = asString(msg.get("reason"));
+                if (reason == null || reason.isBlank()) {
+                    reason = "unknown";
+                }
+                metrics.wsErrorByReason.computeIfAbsent(reason, k -> new AtomicLong()).incrementAndGet();
             } else if ("PONG".equals(type)) {
                 long sentAt = lastPingSentAt.getAndSet(0);
                 if (sentAt > 0) {
@@ -258,7 +270,7 @@ public class WsLoadTest {
 
                 // ACK_RECEIVED: 避免 cron resend / 兜底补发导致重复投递与乱序
                 Long from = asLong(msg.get("from"));
-                if (!sender && from != null && smid != null && clientMsgId != null && !clientMsgId.isBlank()) {
+                if (args.sendAckReceive && !sender && from != null && smid != null && clientMsgId != null && !clientMsgId.isBlank()) {
                     long now = System.currentTimeMillis();
                     String ack = new StringJoiner(",", "{", "}")
                             .add("\"type\":\"ACK\"")
@@ -364,8 +376,11 @@ public class WsLoadTest {
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             authed.set(false);
-            metrics.wsError.incrementAndGet();
-            if (!closed.get() && args.reconnect) {
+            if (!stopping.get() && !closed.get()) {
+                metrics.wsError.incrementAndGet();
+                metrics.wsErrorOnError.incrementAndGet();
+            }
+            if (!stopping.get() && !closed.get() && args.reconnect) {
                 scheduleReconnect(this);
             }
         }
@@ -384,6 +399,7 @@ public class WsLoadTest {
     );
     private static final Random rnd = new Random();
     private static final Map<Long, ClientCtx> clientsByUserId = new ConcurrentHashMap<>();
+    private static final AtomicBoolean stopping = new AtomicBoolean(false);
 
     public static void main(String[] argv) throws Exception {
         Args args = parseArgs(argv);
@@ -462,54 +478,27 @@ public class WsLoadTest {
         }
 
         if (args.mode == Mode.SINGLE_E2E || args.mode == Mode.ACK_STRESS) {
-            scheduler.scheduleAtFixedRate(() -> {
-                for (ClientCtx c : clients) {
-                    if (!c.sender) continue;
-                    if (!c.authed.get()) continue;
-                    WebSocket ws = c.ws;
-                    if (ws == null) continue;
-
-                    m.msgAttempted.incrementAndGet();
-                    if (args.openLoop) {
-                        int hard = Math.max(1, args.maxInflightHard);
-                        if (c.inflight.get() >= hard) {
-                            m.msgSkippedHard.incrementAndGet();
-                            continue;
-                        }
-                    } else {
-                        int lim = (args.inflight <= 0) ? Integer.MAX_VALUE : Math.max(1, args.inflight);
-                        if (c.inflight.get() >= lim) continue;
-                    }
-
-                    long seq = c.sendSeq.incrementAndGet();
-                    String clientMsgId = c.userId + "-" + seq;
-                    long sendTs = System.currentTimeMillis();
-                    String body = buildBody(sendTs, seq, args.bodyBytes);
-                    String msg = new StringJoiner(",", "{", "}")
-                            .add("\"type\":\"SINGLE_CHAT\"")
-                            .add("\"to\":" + c.peerUserId)
-                            .add("\"clientMsgId\":\"" + clientMsgId + "\"")
-                            .add("\"msgType\":\"TEXT\"")
-                            .add("\"body\":\"" + escapeJson(body) + "\"")
-                            .add("\"ts\":" + sendTs)
-                            .toString();
-                    m.msgSent.incrementAndGet();
-                    c.inflight.incrementAndGet();
-                    c.pendingSendTsByClientMsgId.put(clientMsgId, sendTs);
-                    ws.sendText(msg, true).whenComplete((ignored, err) -> {
-                        if (err != null) {
-                            c.inflight.updateAndGet(vv -> Math.max(0, vv - 1));
-                            c.pendingSendTsByClientMsgId.remove(clientMsgId);
-                            m.wsError.incrementAndGet();
-                        }
-                    });
-                }
-            }, 0, args.msgIntervalMs, TimeUnit.MILLISECONDS);
+            // Avoid micro-bursts: the old implementation sent from all senders in the same scheduler tick,
+            // which creates a 2500-msg burst every msgIntervalMs (e.g. every 3s) and inflates wsError/queueing.
+            // Spread each sender with a deterministic per-user offset in [0, msgIntervalMs).
+            int interval = Math.max(1, args.msgIntervalMs);
+            for (ClientCtx c : clients) {
+                if (!c.sender) continue;
+                long mixed = mix64(c.userId);
+                long initDelay = Math.floorMod(Long.hashCode(mixed), interval);
+                scheduler.scheduleAtFixedRate(() -> trySendSingleChat(c, args, m), initDelay, interval, TimeUnit.MILLISECONDS);
+            }
         }
 
         long endMs = startMs + args.durationSeconds * 1000L;
         while (System.currentTimeMillis() < endMs) {
             Thread.sleep(1000);
+        }
+
+        // Stop periodic senders; give receivers a short drain window before closing sockets.
+        stopping.set(true);
+        if (args.drainMs > 0) {
+            Thread.sleep(args.drainMs);
         }
 
         for (ClientCtx c : clients) c.close();
@@ -539,6 +528,52 @@ public class WsLoadTest {
         long mixed = mix64(userId);
         int idx = Math.floorMod(Long.hashCode(mixed), urls.size());
         return urls.get(idx);
+    }
+
+    private static void trySendSingleChat(ClientCtx c, Args args, Metrics m) {
+        if (stopping.get()) return;
+        if (!c.sender) return;
+        if (!c.authed.get()) return;
+        WebSocket ws = c.ws;
+        if (ws == null) return;
+
+        m.msgAttempted.incrementAndGet();
+        if (args.openLoop) {
+            int hard = Math.max(1, args.maxInflightHard);
+            if (c.inflight.get() >= hard) {
+                m.msgSkippedHard.incrementAndGet();
+                return;
+            }
+        } else {
+            int lim = (args.inflight <= 0) ? Integer.MAX_VALUE : Math.max(1, args.inflight);
+            if (c.inflight.get() >= lim) return;
+        }
+
+        long seq = c.sendSeq.incrementAndGet();
+        String clientMsgId = c.userId + "-" + seq;
+        long sendTs = System.currentTimeMillis();
+        String body = buildBody(sendTs, seq, args.bodyBytes);
+        String msg = new StringJoiner(",", "{", "}")
+                .add("\"type\":\"SINGLE_CHAT\"")
+                .add("\"to\":" + c.peerUserId)
+                .add("\"clientMsgId\":\"" + clientMsgId + "\"")
+                .add("\"msgType\":\"TEXT\"")
+                .add("\"body\":\"" + escapeJson(body) + "\"")
+                .add("\"ts\":" + sendTs)
+                .toString();
+        m.msgSent.incrementAndGet();
+        c.inflight.incrementAndGet();
+        c.pendingSendTsByClientMsgId.put(clientMsgId, sendTs);
+        ws.sendText(msg, true).whenComplete((ignored, err) -> {
+            if (err != null) {
+                c.inflight.updateAndGet(vv -> Math.max(0, vv - 1));
+                c.pendingSendTsByClientMsgId.remove(clientMsgId);
+                if (!stopping.get()) {
+                    m.wsError.incrementAndGet();
+                    m.wsErrorSendFail.incrementAndGet();
+                }
+            }
+        });
     }
 
     private static long mix64(long z) {
@@ -603,9 +638,13 @@ public class WsLoadTest {
         System.out.println("  \"openLoop\": " + args.openLoop + ",");
         System.out.println("  \"maxInflightHard\": " + args.maxInflightHard + ",");
         System.out.println("  \"maxValidE2eMs\": " + args.maxValidE2eMs + ",");
+        System.out.println("  \"sendAckReceive\": " + args.sendAckReceive + ",");
+        System.out.println("  \"drainMs\": " + args.drainMs + ",");
         System.out.println("  \"connect\": {\"attempts\": " + m.connectAttempts.get() + ", \"ok\": " + m.connectOk.get() + ", \"fail\": " + m.connectFail.get() + "},");
         System.out.println("  \"auth\": {\"ok\": " + m.authOk.get() + ", \"fail\": " + m.authFail.get() + "},");
         System.out.println("  \"errors\": {\"wsError\": " + m.wsError.get() + "},");
+        System.out.println("  \"errorsDetail\": {\"recvError\": " + m.wsErrorRecvError.get() + ", \"onError\": " + m.wsErrorOnError.get() + ", \"sendFail\": " + m.wsErrorSendFail.get() + "},");
+        System.out.println("  \"errorsByReason\": " + mapJson(m.wsErrorByReason) + ",");
         if (args.mode == Mode.PING) {
             System.out.println("  \"ping\": {\"sent\": " + m.pingSent.get() + ", \"pong\": " + m.pongRecv.get() + ", \"rttMs\": " + pctJson(ping) + "},");
         }
@@ -639,6 +678,19 @@ public class WsLoadTest {
         }
         System.out.println("  \"note\": \"Single-node results only; use for baseline/regression\""); 
         System.out.println("}");
+    }
+
+    private static String mapJson(ConcurrentHashMap<String, AtomicLong> m) {
+        if (m == null || m.isEmpty()) return "{}";
+        List<Map.Entry<String, AtomicLong>> entries = new ArrayList<>(m.entrySet());
+        entries.sort((a, b) -> Long.compare(b.getValue().get(), a.getValue().get()));
+        StringJoiner sj = new StringJoiner(",", "{", "}");
+        for (Map.Entry<String, AtomicLong> e : entries) {
+            String k = e.getKey();
+            if (k == null) k = "null";
+            sj.add("\"" + escapeJson(k) + "\":" + e.getValue().get());
+        }
+        return sj.toString();
     }
 
     private static String pctJson(List<Long> values) {
@@ -692,6 +744,8 @@ public class WsLoadTest {
                 case "--maxValidE2eMs" -> { a.maxValidE2eMs = Long.parseLong(v); i++; }
                 case "--ackStressTypes" -> { a.ackStressTypes = v; i++; }
                 case "--ackEveryN" -> { a.ackEveryN = Integer.parseInt(v); i++; }
+                case "--sendAckReceive" -> { a.sendAckReceive = true; }
+                case "--drainMs" -> { a.drainMs = Integer.parseInt(v); i++; }
                 default -> { /* ignore */ }
             }
         }
