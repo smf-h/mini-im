@@ -2,6 +2,7 @@ package com.miniim.gateway.ws;
 
 import com.miniim.auth.service.JwtService;
 import com.miniim.auth.service.SessionVersionStore;
+import com.miniim.gateway.config.WsResendProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import com.miniim.gateway.session.WsRouteStore;
 import com.miniim.gateway.ws.cluster.WsClusterBus;
@@ -35,6 +36,7 @@ public class WsAuthHandler {
     private final WsRouteStore routeStore;
     private final WsClusterBus clusterBus;
     private final WsResendService wsResendService;
+    private final WsResendProperties resendProperties;
     private final WsWriter wsWriter;
 
     public void handleAuth(ChannelHandlerContext ctx, WsEnvelope msg) {
@@ -46,7 +48,7 @@ public class WsAuthHandler {
             if (uid != null) {
                 afterAuthed(uid, ch, "auth_already_authed");
             }
-            if (uid != null && markResendAfterAuthOnce(ch)) {
+            if (uid != null && resendProperties.afterAuthEnabledEffective() && markResendAfterAuthOnce(ch)) {
                 wsResendService.resendForChannelAsync(ch, uid, "auth_already_authed");
             }
             return;
@@ -78,7 +80,7 @@ public class WsAuthHandler {
         }
 
         afterAuthed(userId, ch, "auth");
-        if (markResendAfterAuthOnce(ch)) {
+        if (resendProperties.afterAuthEnabledEffective() && markResendAfterAuthOnce(ch)) {
             wsResendService.resendForChannelAsync(ch, userId, "auth");
         }
     }

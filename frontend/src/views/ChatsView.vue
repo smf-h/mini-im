@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// ChatsView：会话模块（仿微信三栏），左侧列表支持单聊/群聊切换与搜索过滤。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import UiAvatar from '../components/UiAvatar.vue'
@@ -28,6 +29,8 @@ const dnd = useDndStore()
 
 const tab = ref<Tab>('dm')
 
+const query = ref('')
+
 const dmItems = ref<SingleChatConversationDto[]>([])
 const dmLoading = ref(false)
 const dmDone = ref(false)
@@ -47,6 +50,30 @@ const tabOptions = [
   { value: 'dm', label: '单聊' },
   { value: 'group', label: '群聊' },
 ]
+
+const queryNorm = computed(() => query.value.trim().toLowerCase())
+
+const filteredDmItems = computed(() => {
+  const q = queryNorm.value
+  if (!q) return dmItems.value
+  return dmItems.value.filter((c) => {
+    const name = users.displayName(c.peerUserId).toLowerCase()
+    const peer = String(c.peerUserId).toLowerCase()
+    const last = String(c.lastMessage?.content ?? '').toLowerCase()
+    return name.includes(q) || peer.includes(q) || last.includes(q)
+  })
+})
+
+const filteredGroupItems = computed(() => {
+  const q = queryNorm.value
+  if (!q) return groupItems.value
+  return groupItems.value.filter((c) => {
+    const name = String((c.name || groups.displayName(c.groupId)) ?? '').toLowerCase()
+    const gid = String(c.groupId).toLowerCase()
+    const last = String(c.lastMessage?.content ?? '').toLowerCase()
+    return name.includes(q) || gid.includes(q) || last.includes(q)
+  })
+})
 
 const dmCursor = computed(() => {
   const last = dmItems.value.length ? dmItems.value[dmItems.value.length - 1] : undefined
@@ -358,13 +385,25 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+      <div class="panelSearch">
+        <div class="searchBox" role="search">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M10 4a6 6 0 1 0 3.6 10.8l4.3 4.3a1 1 0 0 0 1.4-1.4l-4.3-4.3A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8a4 4 0 0 1 0-8Z"
+            />
+          </svg>
+          <input v-model="query" class="searchInput" placeholder="搜索" aria-label="搜索会话" />
+          <button v-if="query" class="searchClear" type="button" aria-label="清空搜索" @click="query = ''">×</button>
+        </div>
+      </div>
       <div class="panelTabs">
         <UiSegmented v-model="tab" :options="tabOptions" />
       </div>
 
       <div ref="listEl" class="list" @scroll="onScroll">
         <template v-if="tab === 'dm'">
-          <UiListItem v-for="c in dmItems" :key="c.singleChatId" :to="`/chats/dm/${c.peerUserId}`">
+          <UiListItem v-for="c in filteredDmItems" :key="c.singleChatId" :to="`/chats/dm/${c.peerUserId}`">
             <template #left>
               <button class="avatarBtn" type="button" @click="openUser($event, c.peerUserId)">
                 <UiAvatar :text="users.displayName(c.peerUserId)" :seed="c.peerUserId" :size="42" />
@@ -386,7 +425,22 @@ onUnmounted(() => {
                   title="免打扰：仅屏蔽 toast"
                   @click.stop="void dnd.toggleDm(c.peerUserId)"
                 >
-                  🔕
+                  <svg v-if="dnd.isDmMuted(c.peerUserId)" class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M4.3 3.3a1 1 0 0 1 1.4 0l16 16a1 1 0 1 1-1.4 1.4l-16-16a1 1 0 0 1 0-1.4Z"
+                    />
+                  </svg>
+                  <svg v-else class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+                    />
+                  </svg>
                 </button>
                 <UiBadge :count="c.unreadCount ?? 0" />
               </div>
@@ -394,6 +448,7 @@ onUnmounted(() => {
           </UiListItem>
 
           <div v-if="dmError" class="tail error">{{ dmError }}</div>
+          <div v-else-if="queryNorm && filteredDmItems.length === 0" class="tail muted">无匹配结果</div>
           <div class="tail muted">
             <span v-if="dmLoading">加载中…</span>
             <span v-else-if="dmDone">没有更多了</span>
@@ -402,7 +457,7 @@ onUnmounted(() => {
         </template>
 
         <template v-else>
-          <UiListItem v-for="c in groupItems" :key="c.groupId" :to="`/chats/group/${c.groupId}`">
+          <UiListItem v-for="c in filteredGroupItems" :key="c.groupId" :to="`/chats/group/${c.groupId}`">
             <template #left>
               <button class="avatarBtn" type="button" @click="openGroupProfile($event, c.groupId)">
                 <UiAvatar :text="c.name || groups.displayName(c.groupId)" :seed="c.groupId" :size="42" />
@@ -424,7 +479,22 @@ onUnmounted(() => {
                   title="免打扰：仅屏蔽 toast（important/@我 不屏蔽）"
                   @click.stop="void dnd.toggleGroup(c.groupId)"
                 >
-                  🔕
+                  <svg v-if="dnd.isGroupMuted(c.groupId)" class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M4.3 3.3a1 1 0 0 1 1.4 0l16 16a1 1 0 1 1-1.4 1.4l-16-16a1 1 0 0 1 0-1.4Z"
+                    />
+                  </svg>
+                  <svg v-else class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+                    />
+                  </svg>
                 </button>
                 <div v-if="(c.mentionUnreadCount ?? 0) > 0" class="mentionTag">@</div>
                 <UiBadge :count="c.unreadCount ?? 0" />
@@ -433,6 +503,7 @@ onUnmounted(() => {
           </UiListItem>
 
           <div v-if="groupError" class="tail error">{{ groupError }}</div>
+          <div v-else-if="queryNorm && filteredGroupItems.length === 0" class="tail muted">无匹配结果</div>
           <div class="tail muted">
             <span v-if="groupLoading">加载中…</span>
             <span v-else-if="groupDone">没有更多了</span>
@@ -500,6 +571,10 @@ onUnmounted(() => {
   background: rgba(7, 193, 96, 0.16);
 }
 .panelTabs {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--divider);
+}
+.panelSearch {
   padding: 10px 14px;
   border-bottom: 1px solid var(--divider);
 }
@@ -571,10 +646,12 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   color: rgba(15, 23, 42, 0.6);
   opacity: 0.5;
+}
+.muteBtn .iconSvg {
+  width: 14px;
+  height: 14px;
 }
 .muteBtn:hover {
   opacity: 0.85;

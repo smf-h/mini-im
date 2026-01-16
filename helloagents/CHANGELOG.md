@@ -14,11 +14,13 @@
 - 群聊：新增“策略切换”（推消息体/通知后拉取/不推兜底），并默认按“群规模 + 在线人数”自动选择（可配置强制模式）
 - 前端：扩展微信绿白视觉变量（颜色/阴影/圆角/分割线），新增 `Avatar/Badge/ListItem/Segmented` 微组件，并重构登录/会话/好友申请页为更接近微信的通栏列表与交互
 - 前端：重构为桌面端 Sidebar Layout（Sidebar + 列表栏 + 主内容区），新增 `/chats`、`/contacts`、`/settings` 路由，并为旧路由提供重定向兼容
+- 前端：会话/通讯录列表新增搜索框；会话页免打扰图标由 emoji 替换为 SVG；单聊/群聊 header 操作改为 iconBtn；群聊新增成员 Drawer（仿微信 PC）
 - 前端：新增全局 `+` 操作菜单（发起单聊/创建群聊/加入群组/添加朋友），并进一步打磨好友申请列表、群资料页、红点未读徽标与 toast 动效
 - 前端：群聊输入框支持 `@` 选择群成员（插入 `@昵称` 并发送 `mentions` 列表以触发 important）
 
 ### 新增
 - 网关：多实例路由（Redis SSOT）+ 跨实例控制通道（Redis Pub/Sub：`KICK/PUSH`），并支持按 `userId` 单端登录踢下线（带 `connId` 避免误踢）
+- 网关：预留 WS 编码线程池（`im.executors.ws-encode.*`）与 post-db 线程池（`im.executors.post-db.*`），用于后续“eventLoop 减负/后置隔离”优化
 - 鉴权：`sessionVersion`（JWT `sv` claim）用于 token 即时失效；新登录 bump `sv`，旧 token 重新鉴权将被拒绝
 - 幂等：客户端 `clientMsgId` 幂等从本地 Caffeine 升级为 Redis `SETNX`（Redis 不可用时降级 Caffeine）
 - WS：发送者消息不乱序（per-channel Future 链队列）
@@ -52,8 +54,24 @@
 - 后端：接入 Flyway（`src/main/resources/db/migration/*`），启动时自动迁移；对已有库使用 `baseline-version=0`
 - 配置：新增两份配置模板 `src/main/resources/application.env.yml`（仅变量）与 `src/main/resources/application.env.values.yml`（示例值）
 - 消息：新增撤回（2分钟，仅发送者）：WS `MESSAGE_REVOKE` + 广播 `MESSAGE_REVOKED`，撤回后对外统一展示“已撤回”（HTTP/WS/离线补发一致）
+- 测试：补充 WS 压测脚本（k6 方案 + Java 备用方案），并在知识库记录单机快测结论
+- 性能：新增 `im.gateway.ws.perf-trace.*` 分段耗时打点（`ws_perf single_chat/group_chat/group_dispatch/push/redis_pubsub`），用于量化“排队/DB/Redis/跨实例转发”
+- 测试：新增 5 实例一键分级压测 `scripts/ws-cluster-5x-test/run.ps1`（默认 500/5000/50000；可选 `-Run500k`）
+- 测试：新增群聊 push 压测 `scripts/ws-group-load-test/run.ps1`（含重复/乱序统计）与 `scripts/ws-perf-tools/parse-ws-perf.ps1`（解析 ws_perf 分位数）
+- 工具：Codex 全局完成弹窗（Windows）：`C:/Users/yejunbo/.codex/config.toml` notify hook + `C:/Users/yejunbo/.codex/notify.py`
 
 ### 修复
+- WS：增加写缓冲水位 + 慢消费者背压保护（连接 unwritable 时拒绝继续写入，持续 unwritable 自动断开），避免慢端拖垮整体并提升可观测性
+- WS：生产侧写路径补齐“调度前门禁”（避免 eventLoop pending tasks 堆积）；补发在不可写连接上跳过；critical push 在不可写时断开连接
+- WS：单聊 ACK 写回“回切隔离”（DB 回调线程直接后置处理，写回由 `WsWriter` marshal 到目标 channel eventLoop），用于降低 `dbToEventLoopMs` 与 eventLoop backlog
+- WS：单聊主链路提速：`t_single_chat.updated_at` 更新异步化（`imPostDbExecutor` + 1s 去抖），ACK(saved)/在线投递不再等待 UPDATE，用于降低 `dbQueueMs/queueMs` 并压低 E2E 分位数
+- WS：`WsChannelSerialQueue` 在 inEventLoop 时直接执行（不再额外 `eventLoop().execute(...)`），减少 eventLoop pending tasks 与调度开销
+- WS：新增可选“写回编码 offload”开关 `im.gateway.ws.encode.enabled`（默认关闭，避免未经调参的排队回归；启用需用 `ws-cluster-5x-test` 做回归验证）
+- 测试：`ws-load-test` 的 `rolePinned` 策略改为按 `userId mod N` 均衡分配 `wsUrls`（5 实例不再只打到 2 个实例，避免热点导致的误判）
+- 测试：`scripts/ws-cluster-5x-test/run.ps1` 修复多实例启动参数截断/端口探测不稳定；新增 Hikari 参数透传与默认 `AutoUserBase`（避免 Redis `clientMsgId` 幂等污染导致“ACK(saved) 但不投递”的假象）
+- 性能/稳定性：`imDbExecutor` 采用 `AbortPolicy`，单聊入口捕获 `RejectedExecutionException` 并映射为 `ERROR server_busy`，避免过载时排队雪崩
+- 测试：Windows 下启动脚本优先使用 `JAVA_HOME\\bin\\java.exe`（避免 `Oracle\\Java\\javapath\\java.exe` shim 导致残留进程/内存采样错误）；`ws-backpressure-multi-test` 增加 `meta_*.json` 与 mem CSV pid 字段，便于复现与排查
+- 构建：修复个别源码文件 BOM 导致 `mvn package` 编译失败（Windows 默认编码下报 `\ufeff`）
 - WS：允许 `/ws?token=...`（query token）握手，修复浏览器端连接卡住导致 `auth_timeout`
 - WS：连接存活期间对 `sessionVersion` 做按连接限频复验，并在心跳路径（client ping / writer-idle）检测失效连接，降低 Pub/Sub 丢 KICK 时“旧连接继续存活”的风险
 - WS：开启 reader-idle 检测并在 writer-idle 发送 WS ping，降低僵尸连接导致的“假在线/TTL 续命”
@@ -62,6 +80,10 @@
 - WS：补发逻辑抽离为 `WsResendService`，`WsFrameHandler/WsCron` 仅负责门禁与调度，减少重复代码
 - WS：`CALL_*` 信令处理抽离为 `WsCallHandler`（占用/超时/落库/转发），进一步瘦身 `WsFrameHandler`
 - WS：`ACK` 处理抽离为 `WsAckHandler`（送达/已读推进成员游标 + 回执给发送方）
+- 测试：Java WS 压测器新增 open-loop（固定速率）模式与 `maxInflightHard/maxValidE2eMs` 自保门禁，输出 `attempted/sent/skippedHard/e2eInvalid` 用于 offered load 对照
+- 测试：5实例一键分级压测 `ws-cluster-5x-test` 增加 open-loop 参数透传，并支持 `im.gateway.ws.ack.batch-enabled/batch-window-ms` 对照回归
+- WS：delivered/read ACK 推进从 `imDbExecutor` 隔离到 `imAckExecutor`，并支持按 `(ackUserId, ackType, chatType, chatId)` 1s 窗口合并（可开关）以降低 DB 写放大
+- WS：AUTH 后离线补发增加可控开关 `im.gateway.ws.resend.after-auth-enabled`（默认 true；压测可关闭避免历史消息污染统计）
 - WS：`FRIEND_REQUEST` 处理抽离为 `WsFriendRequestHandler`（幂等 claim + 落库 ACK(saved) + best-effort 推送）
 - WS：`SINGLE_CHAT/GROUP_CHAT` 处理分别抽离为 `WsSingleChatHandler` / `WsGroupChatHandler`，`WsFrameHandler` 仅做协议解析与分发
 - WS：进一步拆分 `WsWriter/WsAuthHandler/WsPingHandler`，统一写出与认证/心跳逻辑，`WsFrameHandler` 收敛为路由器
@@ -80,9 +102,13 @@
 - 配置：`application.yml` 移除明文数据库密码，改为环境变量注入；新增 `application-dev.yml` 承载开发期 SQL stdout 与 debug logger
 - 提交卫生：新增 `.gitattributes`，并在 `.gitignore` 中忽略小程序私有配置与模板目录，减少误提交风险
 - 稳定性：对关键路径的吞异常补齐最小 debug 日志/注释，降低静默失败定位成本
+- WS：单聊 `t_single_chat.updated_at` 增加 1s 窗口去抖（可配置），用于 burst 场景降低 DB 写放大并压尾延迟
+- 测试：`ws-cluster-5x-test` 支持透传单聊 updatedAt 去抖开关，并支持跳过 50k connect 阶段（便于高压场景快速回归）
+- 单聊：发送主链路移除 `ensureMembers()`（减少每消息 2 次 exists read），delivered/read ACK 改为“优先 update，缺行再补建兜底”，将成员行从强依赖改为按需补齐
+- 单聊（实验性）：两级回执 `ACK(accepted/saved)` + Redis Streams 异步投递/落库（开关：`im.gateway.ws.single-chat.two-phase.*`；可选 `deliver-before-saved` 先投递后落库）
+- 测试：`ws-cluster-5x-test` 的 `single_e2e_*_avg.json` 补齐 accepted/saved 分位数与 dup/reorder 汇总，并修复嵌套 PowerShell 进程触发的 conda 编码噪声
 
 ## [0.0.1-SNAPSHOT] - 2025-12-25
 
 ### 新增
 - 初始化 helloagents 知识库骨架与基础文档
-

@@ -28,6 +28,7 @@
 - 通讯录模块（双栏）：`frontend/src/views/ContactsView.vue`（左：导航+好友；右：新的朋友/群组/个人页）
 - 好友申请 UI：`frontend/src/views/FriendRequestsView.vue`（入口：`/contacts/new-friends`）
 - 群聊 UI：`frontend/src/views/GroupChatView.vue`（入口：`/chats/group/:groupId`）
+- 群成员抽屉（Drawer）：`frontend/src/views/GroupChatView.vue`（群聊页 header 右侧按钮打开，支持搜索成员）
 - 消息撤回：`frontend/src/views/ChatView.vue` / `frontend/src/views/GroupChatView.vue`（WS `MESSAGE_REVOKE` + 推送 `MESSAGE_REVOKED`）
 - 群组列表/创建/申请入群：`frontend/src/views/GroupsView.vue`（入口：`/contacts/groups`）
 - 设置页：`frontend/src/views/SettingsView.vue`
@@ -40,16 +41,17 @@
 - 三段结构：
   - Sidebar（64px）：一级入口 `/chats`、`/contacts`、`/settings`
   - Sidebar（扩展）：新增 `/moments` 入口（朋友圈）
-  - List Panel：模块内部的二级列表（会话列表/通讯录列表）
+  - List Panel：模块内部的二级列表（会话列表/通讯录列表），顶部提供搜索框用于本地过滤
   - Main Stage：展示聊天窗口、好友资料、群资料等
 
 ## 视觉语言系统（微信绿白）
 
 设计变量集中在 `frontend/src/styles/app.css`，核心约定：
 - `--primary`（微信绿）、`--bg`（全局背景）、`--surface/--panel/--card`（表面色）
-- `--text/--text-2/--text-3`（主文案/次级/弱化）
+- `--text/--text-1/--text-2/--text-3`（主文案/次级/弱化；`--text-1` 为兼容别名）
 - `--divider`（极淡分割线）、`--shadow-card`（弥散阴影）、`--shadow-float`（主按钮轻光晕）
 - 兼容：保留 `--bg-soft/--shadow-soft/--radius-lg` 等旧变量名并映射到新变量，避免历史页面样式断裂
+- 通用交互样式：`iconBtn/searchBox` 等全局样式类用于复用（仿微信的轻量按钮与搜索框）
 
 ## 单聊 UI 约定（仿微信交互）
 - 气泡大小随内容变化，并限制最大宽度
@@ -65,9 +67,10 @@
 - 点击进入会话会立即清零未读（前端先乐观清零，同时 best-effort 发送 WS `ACK(read)` 推进服务端游标）
 - UI 形态：通栏列表（Edge-to-Edge），Hover 时整行浅灰背景
 - 结构：左侧头像、中间昵称+预览、右侧时间+未读徽标（未读为 0 不显示）
+- 搜索：会话列表支持本地搜索过滤（昵称/uid/最近一条消息内容）
 
 ## 头像与个人主页
-- 头像统一使用 `UiAvatar`；在会话列表/好友申请/聊天消息里支持点击头像进入个人主页 `/u/:userId`
+- 头像统一使用 `UiAvatar`（仿微信圆角方形）；在会话列表/好友申请/聊天消息里支持点击头像进入个人主页 `/u/:userId`
 - 个人主页展示公开信息与 `FriendCode`；可在个人主页“一键申请好友”
 
 说明：当前“个人主页”的主入口为 `/contacts/u/:userId`，并保留 `/u/:userId` 的重定向兼容。
@@ -123,7 +126,7 @@
   - store：`frontend/src/stores/dnd.ts`
   - localStorage key：`dnd:v1:${userId}`（按登录用户隔离）
   - 拦截点：`frontend/src/components/AppLayout.vue`（toast 触发前判断 DND）
-  - UI：在单聊/群聊页 header 与会话列表提供开关与 🔕 标识
+  - UI：在单聊/群聊页 header 与会话列表提供开关与“铃铛”图标标识（SVG，避免 emoji/字体差异）
 - 服务端同步（跨端一致）：
   - 登录后会调用 `GET /dnd/list` 拉取服务端配置覆盖本地缓存
   - 切换开关会调用 `POST /dnd/dm/set` / `POST /dnd/group/set` 写入服务端；失败会回滚到旧值

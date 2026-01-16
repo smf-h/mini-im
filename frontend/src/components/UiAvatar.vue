@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// UiAvatar：微信风格头像组件，优先展示图片，失败则展示首字母占位。
 import { computed, ref } from 'vue'
 
 const props = withDefaults(
@@ -70,9 +71,9 @@ const style = computed(() => {
 
 <style scoped>
 .uiAvatar {
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   border: 1px solid rgba(0, 0, 0, 0.06);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -90,4 +91,3 @@ const style = computed(() => {
   letter-spacing: 0.4px;
 }
 </style>
-

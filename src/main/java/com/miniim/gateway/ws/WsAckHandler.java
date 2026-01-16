@@ -7,6 +7,7 @@ import com.miniim.domain.enums.ChatType;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.service.MessageService;
 import com.miniim.domain.service.SingleChatMemberService;
+import com.miniim.gateway.config.WsAckBatchProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -16,10 +17,18 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @RequiredArgsConstructor
@@ -32,8 +41,9 @@ public class WsAckHandler {
     private final GroupMemberMapper groupMemberMapper;
     private final WsPushService wsPushService;
     private final WsWriter wsWriter;
-    @Qualifier("imDbExecutor")
-    private final Executor dbExecutor;
+    private final WsAckBatchProperties ackBatchProperties;
+    @Qualifier("imAckExecutor")
+    private final Executor ackExecutor;
 
     public void handle(ChannelHandlerContext ctx, WsEnvelope msg) {
         Channel channel = ctx.channel();
@@ -60,54 +70,30 @@ public class WsAckHandler {
     }
 
     private void handleAdvanceCursor(ChannelHandlerContext ctx, WsEnvelope msg, long ackUserId, AckType ackType) {
-        CompletableFuture.runAsync(() -> {
-            MessageEntity messageEntity = findMessageByAck(ctx, msg, ackUserId);
-            if (messageEntity == null || messageEntity.getId() == null || messageEntity.getChatType() == null) {
-                return;
-            }
-
-            long msgId = messageEntity.getId();
-            ChatType chatType = messageEntity.getChatType();
-            if (chatType == ChatType.SINGLE) {
-                Long singleChatId = messageEntity.getSingleChatId();
-                if (singleChatId == null || singleChatId <= 0) {
-                    return;
+        String serverMsgId = msg.getServerMsgId();
+        if (serverMsgId == null || serverMsgId.isBlank()) {
+            return;
+        }
+        try {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    MessageEntity messageEntity = findMessageByAck(ctx, msg, ackUserId);
+                    if (messageEntity == null || messageEntity.getId() == null || messageEntity.getChatType() == null) {
+                        return;
+                    }
+                    ackBatcher.enqueueResolved(messageEntity, ackUserId, ackType);
+                } catch (Exception e) {
+                    log.debug("ws ack resolve/enqueue failed: {}", e.toString());
                 }
-                if (ackType == AckType.DELIVERED) {
-                    singleChatMemberService.markDelivered(singleChatId, ackUserId, msgId);
-                } else if (ackType == AckType.READ) {
-                    singleChatMemberService.markRead(singleChatId, ackUserId, msgId);
-                }
-
-                Long senderUserId = messageEntity.getFromUserId();
-                if (senderUserId != null && senderUserId > 0 && senderUserId != ackUserId) {
-                    WsEnvelope ack = new WsEnvelope();
-                    ack.type = "ACK";
-                    ack.from = ackUserId;
-                    ack.to = senderUserId;
-                    ack.serverMsgId = messageEntity.getServerMsgId();
-                    ack.ackType = ackType.getDesc();
-                    ack.ts = Instant.now().toEpochMilli();
-                    wsPushService.pushToUser(senderUserId, ack);
-                }
-                return;
-            }
-
-            if (chatType == ChatType.GROUP) {
-                Long groupId = messageEntity.getGroupId();
-                if (groupId == null || groupId <= 0) {
-                    return;
-                }
-                if (ackType == AckType.DELIVERED) {
-                    groupMemberMapper.markDelivered(groupId, ackUserId, msgId);
-                } else if (ackType == AckType.READ) {
-                    groupMemberMapper.markRead(groupId, ackUserId, msgId);
-                }
-            }
-        }, dbExecutor).orTimeout(3, TimeUnit.SECONDS).exceptionally(e -> {
-            log.error("ws ack failed: {}", e.toString());
-            return null;
-        });
+            }, ackExecutor).orTimeout(3, TimeUnit.SECONDS).exceptionally(e -> {
+                log.error("ws ack failed: {}", e.toString());
+                return null;
+            });
+        } catch (RejectedExecutionException e) {
+            log.warn("ws ack rejected: {}", e.toString());
+        } catch (Exception e) {
+            log.debug("ws ack schedule failed: {}", e.toString());
+        }
     }
 
     private MessageEntity findMessageByAck(ChannelHandlerContext ctx, WsEnvelope msg, long ackUserId) {
@@ -181,5 +167,178 @@ public class WsAckHandler {
             return false;
         }
         return "read".equalsIgnoreCase(ackType) || "ack_read".equalsIgnoreCase(ackType);
+    }
+
+    private final AckBatcher ackBatcher = new AckBatcher();
+
+    private final class AckBatcher {
+        private final Object lock = new Object();
+        private final AtomicBoolean scheduled = new AtomicBoolean(false);
+        private ScheduledExecutorService timer;
+        private ScheduledFuture<?> future;
+
+        private final Map<String, PendingAck> pending = new HashMap<>();
+
+        private ScheduledExecutorService ensureTimer() {
+            ScheduledExecutorService t = timer;
+            if (t != null) {
+                return t;
+            }
+            if (!ackBatchProperties.batchEnabledEffective()) {
+                return null;
+            }
+            synchronized (lock) {
+                if (timer != null) {
+                    return timer;
+                }
+                timer = Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread th = new Thread(r, "im-ack-timer");
+                    th.setDaemon(true);
+                    return th;
+                });
+                return timer;
+            }
+        }
+
+        void enqueueResolved(MessageEntity entity, long ackUserId, AckType ackType) {
+            if (entity == null || entity.getId() == null || entity.getChatType() == null) {
+                return;
+            }
+            if (!ackBatchProperties.batchEnabledEffective()) {
+                process(List.of(toPending(entity, ackUserId, ackType)));
+                return;
+            }
+            long msgId = entity.getId();
+            ChatType chatType = entity.getChatType();
+
+            Long chatId = null;
+            if (chatType == ChatType.SINGLE) {
+                chatId = entity.getSingleChatId();
+            } else if (chatType == ChatType.GROUP) {
+                chatId = entity.getGroupId();
+            }
+            if (chatId == null || chatId <= 0) {
+                return;
+            }
+
+            synchronized (lock) {
+                String key = ackKey(ackUserId, ackType, chatType, chatId);
+                PendingAck p = pending.get(key);
+                if (p == null) {
+                    p = new PendingAck();
+                    p.ackUserId = ackUserId;
+                    p.ackType = ackType;
+                    p.chatType = chatType;
+                    p.chatId = chatId;
+                    p.maxMsgId = msgId;
+                    p.maxServerMsgId = entity.getServerMsgId();
+                    p.senderUserId = entity.getFromUserId();
+                    pending.put(key, p);
+                } else if (msgId > p.maxMsgId) {
+                    p.maxMsgId = msgId;
+                    p.maxServerMsgId = entity.getServerMsgId();
+                    p.senderUserId = entity.getFromUserId();
+                }
+
+                ScheduledExecutorService t = ensureTimer();
+                if (scheduled.compareAndSet(false, true) && t != null) {
+                    int windowMs = ackBatchProperties.batchWindowMsEffective();
+                    future = t.schedule(this::flush, windowMs, TimeUnit.MILLISECONDS);
+                }
+            }
+        }
+
+        private PendingAck toPending(MessageEntity entity, long ackUserId, AckType ackType) {
+            PendingAck p = new PendingAck();
+            p.ackUserId = ackUserId;
+            p.ackType = ackType;
+            p.chatType = entity.getChatType();
+            if (p.chatType == ChatType.SINGLE) {
+                p.chatId = entity.getSingleChatId() == null ? 0 : entity.getSingleChatId();
+            } else if (p.chatType == ChatType.GROUP) {
+                p.chatId = entity.getGroupId() == null ? 0 : entity.getGroupId();
+            }
+            p.maxMsgId = entity.getId();
+            p.maxServerMsgId = entity.getServerMsgId();
+            p.senderUserId = entity.getFromUserId();
+            return p;
+        }
+
+        private void flush() {
+            List<PendingAck> batch;
+            synchronized (lock) {
+                batch = new ArrayList<>(pending.values());
+                pending.clear();
+                scheduled.set(false);
+                future = null;
+            }
+
+            if (batch.isEmpty()) {
+                return;
+            }
+
+            try {
+                CompletableFuture.runAsync(() -> process(batch), ackExecutor)
+                        .orTimeout(3, TimeUnit.SECONDS)
+                        .exceptionally(e -> {
+                            log.error("ws ack batch failed: {}", e.toString());
+                            return null;
+                        });
+            } catch (RejectedExecutionException e) {
+                log.warn("ws ack batch rejected: {}", e.toString());
+            } catch (Exception e) {
+                log.debug("ws ack batch schedule failed: {}", e.toString());
+            }
+        }
+
+        private void process(List<PendingAck> batch) {
+            for (PendingAck p : batch) {
+                if (p == null || p.chatId <= 0) {
+                    continue;
+                }
+                if (p.chatType == ChatType.SINGLE) {
+                    if (p.ackType == AckType.DELIVERED) {
+                        singleChatMemberService.markDelivered(p.chatId, p.ackUserId, p.maxMsgId);
+                    } else if (p.ackType == AckType.READ) {
+                        singleChatMemberService.markRead(p.chatId, p.ackUserId, p.maxMsgId);
+                    }
+
+                    Long senderUserId = p.senderUserId;
+                    if (senderUserId != null && senderUserId > 0 && senderUserId != p.ackUserId) {
+                        WsEnvelope ack = new WsEnvelope();
+                        ack.type = "ACK";
+                        ack.from = p.ackUserId;
+                        ack.to = senderUserId;
+                        ack.serverMsgId = p.maxServerMsgId;
+                        ack.ackType = p.ackType.getDesc();
+                        ack.ts = Instant.now().toEpochMilli();
+                        wsPushService.pushToUser(senderUserId, ack);
+                    }
+                    continue;
+                }
+
+                if (p.chatType == ChatType.GROUP) {
+                    if (p.ackType == AckType.DELIVERED) {
+                        groupMemberMapper.markDelivered(p.chatId, p.ackUserId, p.maxMsgId);
+                    } else if (p.ackType == AckType.READ) {
+                        groupMemberMapper.markRead(p.chatId, p.ackUserId, p.maxMsgId);
+                    }
+                }
+            }
+        }
+
+        private String ackKey(long ackUserId, AckType ackType, ChatType chatType, long chatId) {
+            return ackUserId + "|" + (ackType == null ? "" : ackType.getDesc()) + "|" + (chatType == null ? "" : chatType.name()) + "|" + chatId;
+        }
+    }
+
+    private static final class PendingAck {
+        long ackUserId;
+        AckType ackType;
+        ChatType chatType;
+        long chatId;
+        long maxMsgId;
+        String maxServerMsgId;
+        Long senderUserId;
     }
 }

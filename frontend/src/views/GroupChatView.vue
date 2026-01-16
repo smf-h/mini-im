@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// GroupChatView：群聊窗口（仿微信），支持 @ 成员、重要消息提示与成员抽屉面板。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
@@ -63,6 +64,36 @@ let notifyPulling = false
 
 const members = ref<GroupMemberDto[]>([])
 const membersLoaded = ref(false)
+
+const memberDrawerOpen = ref(false)
+const memberQuery = ref('')
+
+const memberQueryNorm = computed(() => memberQuery.value.trim().toLowerCase())
+
+const drawerMembers = computed(() => {
+  const q = memberQueryNorm.value
+  const list = members.value
+  if (!q) return list.slice(0, 200)
+  return list
+    .filter((m) => {
+      const id = String(m.userId ?? '').toLowerCase()
+      const name = memberDisplayName(String(m.userId ?? '')).toLowerCase()
+      return id.includes(q) || name.includes(q)
+    })
+    .slice(0, 200)
+})
+
+function openMembersDrawer() {
+  memberQuery.value = ''
+  memberDrawerOpen.value = true
+  if (!membersLoaded.value || !members.value.length) {
+    void loadMembers()
+  }
+}
+
+function closeMembersDrawer() {
+  memberDrawerOpen.value = false
+}
 
 const selfSpeakMutedUntilTs = computed(() => {
   const uid = auth.userId
@@ -733,10 +764,44 @@ watch(
         <div class="title">{{ groupName || `群聊 ${groupId}` }}</div>
         <div v-if="selfSpeakMutedText" class="sub muted" style="color: var(--danger)">{{ selfSpeakMutedText }}</div>
       </div>
-      <div class="row">
-        <button class="btn" @click="toggleGroupMute">{{ groupMuted ? '已免打扰' : '免打扰' }}</button>
-        <button class="btn" @click="router.push(`/chats/group/${groupId}/profile`)">群资料</button>
-        <button class="btn" @click="resetAndLoad">刷新</button>
+      <div class="headerActions">
+        <button class="iconBtn" :data-active="groupMuted" title="免打扰" aria-label="免打扰" @click="toggleGroupMute">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+            />
+            <path
+              v-if="groupMuted"
+              fill="currentColor"
+              d="M4.3 3.3a1 1 0 0 1 1.4 0l16 16a1 1 0 1 1-1.4 1.4l-16-16a1 1 0 0 1 0-1.4Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="群成员" aria-label="群成员" @click="openMembersDrawer">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3s1.34 3 3 3ZM8 11c1.66 0 3-1.34 3-3S9.66 5 8 5S5 6.34 5 8s1.34 3 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V20h14v-1.5C15 14.17 10.33 13 8 13Zm8 0c-.29 0-.62.02-.97.05c1.16.84 1.97 1.97 1.97 3.45V20h6v-1.5c0-2.33-4.67-3.5-7-3.5Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="群资料" aria-label="群资料" @click="void router.push(`/chats/group/${groupId}/profile`)">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="刷新" aria-label="刷新" @click="resetAndLoad">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 12.65-5.65Z"
+            />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -814,6 +879,56 @@ watch(
     </footer>
 
     <div v-if="errorMsg" class="error">{{ errorMsg }}</div>
+
+    <div v-if="memberDrawerOpen" class="drawerMask" @click.self="closeMembersDrawer">
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label="群成员">
+        <div class="drawerTop">
+          <div class="drawerTitle">群成员 ({{ members.length }})</div>
+          <button class="iconBtn" type="button" aria-label="关闭" @click="closeMembersDrawer">×</button>
+        </div>
+        <div class="drawerSearch">
+          <div class="searchBox" role="search">
+            <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M10 4a6 6 0 1 0 3.6 10.8l4.3 4.3a1 1 0 0 0 1.4-1.4l-4.3-4.3A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8a4 4 0 0 1 0-8Z"
+              />
+            </svg>
+            <input v-model="memberQuery" class="searchInput" placeholder="搜索成员" aria-label="搜索成员" />
+            <button
+              v-if="memberQuery"
+              class="searchClear"
+              type="button"
+              aria-label="清空搜索"
+              @click="memberQuery = ''"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div class="drawerList">
+          <div v-if="!membersLoaded" class="drawerEmpty muted">加载中…</div>
+          <template v-else>
+            <button
+              v-for="m in drawerMembers"
+              :key="m.userId"
+              class="memberItem"
+              type="button"
+              @click="openUser(String(m.userId)); closeMembersDrawer()"
+            >
+              <UiAvatar :text="memberDisplayName(m.userId)" :seed="m.userId" :size="32" />
+              <div class="memberMeta">
+                <div class="memberName">{{ memberDisplayName(m.userId) }}</div>
+                <div class="memberId muted">
+                  uid={{ m.userId }}<span v-if="String(m.userId) === String(auth.userId)"> · 我</span>
+                </div>
+              </div>
+            </button>
+            <div v-if="membersLoaded && memberQueryNorm && drawerMembers.length === 0" class="drawerEmpty muted">无匹配结果</div>
+          </template>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -832,6 +947,12 @@ watch(
   padding: 14px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--divider);
+}
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .headerMain {
   min-width: 0;
@@ -1085,6 +1206,80 @@ watch(
   color: var(--danger);
   background: rgba(250, 81, 81, 0.06);
   border-top: 1px solid rgba(250, 81, 81, 0.14);
+  font-size: 12px;
+}
+
+.drawerMask {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(15, 23, 42, 0.22);
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer {
+  width: min(320px, calc(100vw - 60px));
+  height: 100%;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(10px);
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.drawerTop {
+  padding: 14px 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--divider);
+}
+.drawerTitle {
+  font-weight: 900;
+  font-size: 14px;
+}
+.drawerSearch {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--divider);
+}
+.drawerList {
+  flex: 1;
+  overflow: auto;
+}
+.drawerEmpty {
+  padding: 12px 14px;
+  font-size: 12px;
+}
+.memberItem {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+.memberItem:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.memberMeta {
+  min-width: 0;
+}
+.memberName {
+  font-weight: 750;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(15, 23, 42, 0.92);
+}
+.memberId {
+  margin-top: 2px;
   font-size: 12px;
 }
 </style>

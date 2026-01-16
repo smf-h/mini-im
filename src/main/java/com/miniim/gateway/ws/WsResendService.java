@@ -97,6 +97,10 @@ public class WsResendService {
             if (target == null || !target.isActive()) {
                 continue;
             }
+            if (!target.isWritable()) {
+                log.debug("ws resend skipped (channel unwritable): source={}, userId={}", source, userId);
+                continue;
+            }
             if (singleList != null) {
                 for (MessageEntity msg : singleList) {
                     writePending(target, userId, msg, false, source);

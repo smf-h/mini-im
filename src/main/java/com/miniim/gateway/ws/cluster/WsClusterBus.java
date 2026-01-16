@@ -1,6 +1,7 @@
 package com.miniim.gateway.ws.cluster;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.miniim.gateway.config.WsPerfTraceProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -8,6 +9,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Component
@@ -18,16 +21,20 @@ public class WsClusterBus {
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
+    private final WsPerfTraceProperties perfTraceProps;
 
     public void publish(String serverId, WsClusterMessage msg) {
         if (serverId == null || serverId.isBlank() || msg == null) {
             return;
         }
+        long startNs = System.nanoTime();
         try {
             String json = objectMapper.writeValueAsString(msg);
             redis.convertAndSend(topic(serverId), json);
+            maybeLogPerf(startNs, true, serverId, msg.type(), json == null ? 0 : json.length());
         } catch (Exception e) {
             log.debug("ws cluster publish failed: serverId={}, type={}, err={}", serverId, msg.type(), e.toString());
+            maybeLogPerf(startNs, false, serverId, msg.type(), 0);
         }
     }
 
@@ -62,5 +69,19 @@ public class WsClusterBus {
 
     public static String topic(String serverId) {
         return TOPIC_PREFIX + serverId;
+    }
+
+    private void maybeLogPerf(long startNs, boolean ok, String serverId, String type, int jsonLen) {
+        if (perfTraceProps == null || !perfTraceProps.enabledEffective()) {
+            return;
+        }
+        long totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+        long slowMs = perfTraceProps.slowMsEffective();
+        double sampleRate = perfTraceProps.sampleRateEffective();
+        boolean sampled = sampleRate > 0 && ThreadLocalRandom.current().nextDouble() < sampleRate;
+        if (totalMs < slowMs && !sampled) {
+            return;
+        }
+        log.info("ws_perf redis_pubsub ok={} serverId={} type={} totalMs={} jsonLen={}", ok, serverId, type, totalMs, jsonLen);
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.miniim.auth.service.JwtService;
 import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.config.GatewayProperties;
+import com.miniim.gateway.config.WsBackpressureProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import com.miniim.gateway.session.WsRouteStore;
 import com.miniim.gateway.ws.cluster.WsClusterBus;
@@ -47,6 +48,7 @@ public class NettyWsServer implements SmartLifecycle {
     private final WsSingleChatHandler wsSingleChatHandler;
     private final WsGroupChatHandler wsGroupChatHandler;
     private final WsMessageRevokeHandler wsMessageRevokeHandler;
+    private final WsBackpressureProperties backpressureProps;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -68,7 +70,8 @@ public class NettyWsServer implements SmartLifecycle {
                          WsFriendRequestHandler wsFriendRequestHandler,
                          WsSingleChatHandler wsSingleChatHandler,
                          WsGroupChatHandler wsGroupChatHandler,
-                         WsMessageRevokeHandler wsMessageRevokeHandler) {
+                         WsMessageRevokeHandler wsMessageRevokeHandler,
+                         WsBackpressureProperties backpressureProps) {
         this.props = props;
         this.objectMapper = objectMapper;
         this.jwtService = jwtService;
@@ -85,6 +88,7 @@ public class NettyWsServer implements SmartLifecycle {
         this.wsSingleChatHandler = wsSingleChatHandler;
         this.wsGroupChatHandler = wsGroupChatHandler;
         this.wsMessageRevokeHandler = wsMessageRevokeHandler;
+        this.backpressureProps = backpressureProps;
     }
 
     @Override
@@ -104,8 +108,14 @@ public class NettyWsServer implements SmartLifecycle {
         ServerBootstrap b = new ServerBootstrap();
         b.group(boss, worker)
                 .channel(NioServerSocketChannel.class)
-                .childOption(ChannelOption.SO_KEEPALIVE, true)
-                .childHandler(new ChannelInitializer<SocketChannel>() {
+                .childOption(ChannelOption.SO_KEEPALIVE, true);
+        if (backpressureProps == null || backpressureProps.enabledEffective()) {
+            b.childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(
+                    backpressureProps == null ? 256 * 1024 : backpressureProps.lowWaterMarkBytesEffective(),
+                    backpressureProps == null ? 512 * 1024 : backpressureProps.highWaterMarkBytesEffective()
+            ));
+        }
+        b.childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
                         ChannelPipeline p = ch.pipeline();
@@ -121,6 +131,7 @@ public class NettyWsServer implements SmartLifecycle {
                         //    - readerIdle：一段时间内没有读到任何数据（包含 WS 层 pong），用于清理“僵尸连接”
                         //    - writerIdle：一段时间内没有写任何数据，用于触发心跳与在线 TTL 续期
                         p.addLast(new IdleStateHandler(90, 60, 0));
+                        p.addLast(new WsBackpressureHandler(backpressureProps));
 
                         // 4) 握手鉴权：在 HTTP Upgrade 阶段校验 accessToken，并把 userId/exp 绑定到 channel
                         p.addLast(new WsHandshakeAuthHandler(

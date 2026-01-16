@@ -6,9 +6,13 @@
 logs/
 
 # Local agent/run artifacts
+.codex/
 .codex-run/
 scripts/ws-smoke-test/.out/
 scripts/ws-cluster-smoke-test/.out/
+scripts/ws-load-test/.out/
+dump.rdb
+*.rdb
 
 # Frontend (Vue)
 frontend/node_modules/

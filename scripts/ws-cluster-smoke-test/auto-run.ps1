@@ -17,6 +17,64 @@ $ErrorActionPreference = 'Stop'
 # One-command runner for 2-instance WS smoke tests (PowerShell 5.1).
 # Keep this file ASCII-safe.
 
+function Resolve-JavaExe([string]$JavaExe) {
+  if (-not $JavaExe -or $JavaExe.Trim().Length -eq 0) { $JavaExe = "java" }
+
+  if (Test-Path -LiteralPath $JavaExe) { return $JavaExe }
+
+  $resolved = $JavaExe
+  try {
+    $cmd = Get-Command $JavaExe -ErrorAction Stop
+    if ($cmd -and $cmd.Path) { $resolved = $cmd.Path }
+  } catch {
+    # ignore
+  }
+
+  $needsFix = ($JavaExe.Trim().ToLower() -eq "java") -or ($resolved -match "\\\\Oracle\\\\Java\\\\javapath\\\\java\\.exe$") -or ($resolved -match "\\\\javapath\\\\java\\.exe$")
+  if (-not $needsFix) { return $resolved }
+
+  $javaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "Process")
+  if (-not $javaHome -or $javaHome.Trim().Length -eq 0) {
+    $javaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "User")
+  }
+  if ($javaHome -and $javaHome.Trim().Length -gt 0) {
+    $candidate = Join-Path $javaHome "bin\\java.exe"
+    if (Test-Path -LiteralPath $candidate) { return $candidate }
+  }
+
+  $candidates = @(& where.exe java 2>$null)
+  foreach ($c in $candidates) {
+    if (-not $c) { continue }
+    $t = $c.Trim()
+    if ($t.Length -eq 0) { continue }
+    if ($t -match "\\\\javapath\\\\") { continue }
+    if (Test-Path -LiteralPath $t) { return $t }
+  }
+
+  if ($candidates.Count -gt 0) {
+    $t = $candidates[$candidates.Count - 1].Trim()
+    if ($t.Length -gt 0 -and (Test-Path -LiteralPath $t)) { return $t }
+  }
+
+  return $resolved
+}
+
+$JavaExe = Resolve-JavaExe $JavaExe
+
+function Ensure-EnvVarFromUser([string]$Name) {
+  $item = Get-Item -Path ("Env:" + $Name) -ErrorAction SilentlyContinue
+  $cur = if ($null -eq $item) { "" } else { $item.Value }
+  if (-not [string]::IsNullOrWhiteSpace($cur)) { return }
+  $userVal = [Environment]::GetEnvironmentVariable($Name, "User")
+  if (-not [string]::IsNullOrWhiteSpace($userVal)) {
+    Set-Item -Path ("Env:" + $Name) -Value $userVal
+  }
+}
+
+# In Codex CLI each command may run in a fresh PowerShell process; import user-level secrets if present.
+Ensure-EnvVarFromUser "IM_MYSQL_USERNAME"
+Ensure-EnvVarFromUser "IM_MYSQL_PASSWORD"
+
 function Assert-TcpOpen([string]$HostName, [int]$Port, [string]$Hint) {
   $ok = (Test-NetConnection -ComputerName $HostName -Port $Port -WarningAction SilentlyContinue).TcpTestSucceeded
   if (-not $ok) { throw "Cannot connect to ${HostName}:${Port}. $Hint" }

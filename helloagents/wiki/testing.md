@@ -1,5 +1,90 @@
 # 测试说明
 
+> 如果你用 `java -jar` 启动后端且本机 MySQL 账号有密码，请先设置环境变量：`$env:IM_MYSQL_PASSWORD="<your_password>"`（或用启动参数覆盖 `spring.datasource.*`）。
+
+## Windows 本地 Redis（无安装权限时的可复现方案）
+
+本项目的多实例路由、幂等与部分压测脚本依赖 Redis（含 Streams）。若本机没有可用 Redis，可用 Memurai（Redis 7.2 兼容）以“免安装提取”的方式启动：
+
+- 下载 MSI（如可联网）：`Invoke-WebRequest -Uri "https://dist.memurai.com/releases/Memurai-Developer/4.1.2/Memurai-Developer-v4.1.2.msi" -OutFile "$env:TEMP\\Memurai-Developer-v4.1.2.msi"`
+- 解包 MSI（不执行安装器自定义动作）：`Start-Process msiexec.exe -ArgumentList "/a `"$env:TEMP\\Memurai-Developer-v4.1.2.msi`" /qn TARGETDIR=`"C:\\Temp\\memurai_portable`"" -Wait`
+- 启动 Redis：`Start-Process -FilePath "C:\\Temp\\memurai_portable\\Memurai\\memurai.exe" -ArgumentList @("--port","6379","--bind","127.0.0.1","--protected-mode","no","--appendonly","no") -WindowStyle Hidden`
+- 验证：`& "C:\\Temp\\memurai_portable\\Memurai\\memurai-cli.exe" -p 6379 ping`（期望 `PONG`）
+
+## k6 分布式压测（WS）
+
+仓库已提供可直接运行的 k6 脚本与 PowerShell 包装：
+
+- `scripts/k6/ws_ping.js`：WS 连接 + AUTH + PING/PONG RTT（即时性基线）
+- `scripts/k6/ws_single_e2e.js`：单聊 E2E（偶数 VU 发、奇数 VU 收），含重复/乱序统计
+- `scripts/k6/run-ws-ping.ps1`、`scripts/k6/run-ws-single-e2e.ps1`：Windows 一键运行
+
+分布式执行与参数说明见：`scripts/k6/README.md`
+
+## 备用：无外网 GitHub 的压测（Java 脚本）
+
+在无法从 `github.com` 下载 k6 的网络环境下，可使用仓库自带 Java 压测脚本（不依赖第三方二进制）：
+
+- `scripts/ws-load-test/run.ps1`：支持 `connect`/`ping`/`single_e2e` 三种模式，可做连接压测、PING/PONG RTT、单聊 E2E（含重复/乱序统计）
+  - 可选：`-FlapIntervalMs/-FlapPct` 模拟网络抖动（断连重连）
+  - 可选：`-SlowConsumerPct/-SlowConsumerDelayMs` 模拟慢消费者（延迟读取）
+  - 可选：`-NoReadPct` 模拟“接收端不读”（用于触发服务端 `channel.isWritable()` 翻转）
+  - 可选：`-BodyBytes` 控制消息体大小（建议 `4000`，贴近服务端 `MAX_BODY_LEN=4096`，用于更快触发背压）
+  - 可选：`-JavaExe/-JavacExe` 指定 JDK 路径（Windows 下避免 `java` 指向 `Oracle javapath` 造成不可控）
+  - 输出说明：压测输出 JSON 会包含 `userBase/msgIntervalMs/bodyBytes/slowConsumerPct/noReadPct` 等关键参数快照，便于你复现同口径
+  - 输出说明：`single_e2e` 会输出 `e2eMsFast/e2eMsSlow`（拆分普通接收端与慢接收端的延迟分位数），避免“汇总 P99 被慢端拖高”导致误判
+
+### 5 实例一键分级压测（单机/Windows）
+
+用于：一键启动 5 个网关实例（共用同一 MySQL/Redis），并按分级（默认 `500/5000/50000`）执行 connect/ping/single_e2e + 群聊 push 压测，同时解析 `ws_perf` 分段耗时。
+
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-5x-test/run.ps1`
+  - 默认不会跑 `500000`（单机高概率会把本机压测端先打挂）；如确实要尝试，可加 `-Run500k`（风险自担）
+  - 默认会从 **User-level 环境变量** 补齐 `IM_MYSQL_PASSWORD`（避免“每次开新 PowerShell 进程变量丢失”）
+  - 输出目录：`logs/ws-cluster-5x-test_YYYYMMDD_HHMMSS/`（内含每一步 JSON 与每个实例日志）
+
+### 群聊 push 压测（含乱序/重复统计）
+
+用于：通过 HTTP 自动注册/登录用户、创建群并拉人，然后建立 WS 连接发送 `GROUP_CHAT`，统计：吞吐、E2E 分位数、重复率与乱序。
+
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-group-load-test/run.ps1 -WsUrls "ws://127.0.0.1:9001/ws;ws://127.0.0.1:9002/ws" -HttpBase "http://127.0.0.1:8080" -Clients 200 -Senders 20 -DurationSeconds 60 -MsgIntervalMs 50 -ReceiverSamplePct 30`
+
+乱序口径说明：
+- `reorderByFrom`：同一发送者（from）维度的乱序/重复触发（更符合“会话内顺序”验证）
+- `reorderByServerMsgId`：接收端看到的全局 `serverMsgId` 非单调（跨发送者/跨实例 push 并发下通常**不保证**）
+
+### ws_perf 分段耗时解析（服务端）
+
+服务端在开启 `im.gateway.ws.perf-trace.*` 后会输出 `ws_perf ...` 日志（采样/慢请求阈值可配），可用脚本解析分位数：
+
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-perf-tools/parse-ws-perf.ps1 -LogPath logs/<runDir>/gw-1.out.log -MaxLines 450000`
+
+## WS 背压/慢消费者保护（服务端）
+
+为避免慢消费者导致 Netty 出站缓冲持续堆积（内存上涨 + 全局延迟抖动），服务端新增背压配置：
+
+- `im.gateway.ws.backpressure.enabled`：默认启用
+- `im.gateway.ws.backpressure.write-buffer-low-water-mark-bytes`：默认 `262144`（256KB）
+- `im.gateway.ws.backpressure.write-buffer-high-water-mark-bytes`：默认 `524288`（512KB）
+- `im.gateway.ws.backpressure.close-unwritable-after-ms`：默认 `3000`（连接持续 unwritable 超过该阈值会被踢下线；设置 `<0` 可禁用踢人）
+- `im.gateway.ws.backpressure.drop-when-unwritable`：默认启用（当连接已 unwritable 时拒绝继续写入，避免缓冲无限增长）
+
+可观测事件：
+- 日志关键字：`ws backpressure: closing slow consumer channel`
+
+回归用例（慢消费者）：
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-load-test/run.ps1 -Mode single_e2e -WsUrls ws://127.0.0.1:9001/ws -Clients 200 -DurationSeconds 60 -MsgIntervalMs 100 -SlowConsumerPct 30 -SlowConsumerDelayMs 5000`
+
+多实例回归（含背压演练，一键启动 2 实例 + smoke + 3 组负载）：
+- `powershell -ExecutionPolicy Bypass -File scripts/ws-backpressure-multi-test/run.ps1 -JavaExe "<path-to-java.exe>" -Clients 200 -DurationSeconds 20 -MsgIntervalMs 20 -BodyBytes 4000 -SlowConsumerPct 30 -SlowConsumerDelayMs 5000 -NoReadPct 30 -BpLowBytes 32768 -BpHighBytes 65536 -BpCloseAfterMs 1500 -TimeoutMs 60000`
+
+说明：`scripts/ws-backpressure-multi-test/run.ps1` 会在 `logs/bp-multi/` 输出 `meta_*.json`（含真实 JVM PID/端口/日志路径）与 `mem_*.csv`（含 pid 列），用于定位慢消费者导致的内存上涨与尾延迟放大。
+
+## 单元测试（快速回归）
+
+- `mvn test`
+
+
 > **注意**：详细的测试规范、分层策略及代码编写要求，请参考 [TESTING_SPEC.md](TESTING_SPEC.md)。本文档主要侧重于“如何运行”现有的联调与冒烟脚本。
 
 ## 前端联调（Vue3 + TypeScript）
@@ -36,6 +121,10 @@
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1`
 - 指定场景：
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario basic`
+
+可选检查依赖说明：
+- `-CheckRedis`：需要本机可用的 `redis-cli`；若未安装会在输出 JSON 中标记 `redis.skipped=true`（不影响主流程冒烟）。
+- `-CheckDb`：需要本机 `mysql` CLI 且提供 `-DbPassword`（或 `MYSQL_PWD`）。
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario idempotency`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario offline`
   - `powershell -ExecutionPolicy Bypass -File scripts/ws-smoke-test/run.ps1 -Scenario cron`

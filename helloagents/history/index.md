@@ -51,6 +51,21 @@
 | 202601062236 | 消息撤回（2分钟，仅发送者） | 功能 | ?已完成 | helloagents/history/2026-01/202601062236_message_revoke/ |
 | 202601062334 | 微信小程序端（原生+TS，单页） | 功能 | ?已完成 | helloagents/history/2026-01/202601062334_wechat_miniprogram/ |
 | 202601072156 | 待提交代码质量审查与收敛 | 维护 | ?已完成 | helloagents/history/2026-01/202601072156_precommit_quality_review/ |
+| 202601082320 | WS 压测与可靠性快测（单机） | 测试 | ?已完成 | helloagents/history/2026-01/202601082320_perf_loadtest_eval/ |
+| 202601090120 | WS 慢消费者背压保护 | 修复 | ?已完成 | helloagents/history/2026-01/202601090120_ws_backpressure/ |
+| 202601090130 | WS 慢消费者背压治理（硬化方案） | 方案 | ?已完成 | helloagents/history/2026-01/202601090130_ws_backpressure_hardening/ |
+| 202601121934 | Codex 任务结束弹窗提醒（脚本） | 维护 | ?已完成 | helloagents/history/2026-01/202601121934_codex_popup/ |
+| 202601121939 | 单聊 ACK 回切隔离（eventLoop 减负） | 修复 | ?已完成 | helloagents/history/2026-01/202601121939_ws_ack_eventloop_isolation/ |
+| 202601122018 | Codex 全局完成弹窗（notify hook） | 维护 | ?已完成 | helloagents/history/2026-01/202601122018_codex_global_notify_popup/ |
+| 202601131248 | Web 端 UI 微调（仿微信三栏） | 重构 | ?已完成 | helloagents/history/2026-01/202601131248_web-ui-revamp/ |
+| 202601131700 | 单聊尾延迟治理预研（WS 编码 offload / post-db 隔离） | 方案 | ?已完成 | helloagents/history/2026-01/202601131700_ws_single_encode_postdb_isolation/ |
+| 202601131424 | 单聊尾延迟治理（encode 开关对照 + writer 串行优化） | 优化 | ?已完成 | helloagents/history/2026-01/202601131424_ws_single_dbqueue_postdb_offload/ |
+| 202601131631 | 固定速率压测（open-loop）+ delivered/read ACK 合并开关 | 优化 | ?已完成 | helloagents/history/2026-01/202601131631_ws_openloop_ack_isolation/ |
+| 202601140018 | 单聊尾延迟收敛（入站队列上限 + 会话 updatedAt 去抖） | 优化 | ?已完成 | helloagents/history/2026-01/202601140018_ws_single_inbound_queue_updatedat_debounce/ |
+| 202601141742 | 单聊主链路提速（updated_at 异步化 + 串行队列 inline + 5 实例均衡 pinning） | 优化 | ?已完成 | helloagents/history/2026-01/202601141742_ws_single_mainchain_speed/ |
+| 202601141925 | 单聊性能回归（DB 线程池×连接池对齐 + 队列收紧） | 优化 | ?已完成 | helloagents/history/2026-01/202601141925_ws_single_dbpool_hikari_alignment/ |
+| 202601150002 | 单聊 DB 减负（ensureMembers 去热路径） | 优化 | ?已完成 | helloagents/history/2026-01/202601150002_singlechat_ensure_members_db_relief/ |
+| 202601151243 | 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams） | 优化 | ?已完成 | helloagents/history/2026-01/202601151243_ws_singlechat_two_phase_ack/ |
 
 ---
 
@@ -76,6 +91,21 @@
 - 202601062236_message_revoke - 消息撤回（2分钟，仅发送者）
 - 202601062334_wechat_miniprogram - 微信小程序端（原生+TS，单页）
 - 202601072156_precommit_quality_review - 待提交代码质量审查与收敛
+- 202601082320_perf_loadtest_eval - WS 压测与可靠性快测（单机）
+- 202601090120_ws_backpressure - WS 慢消费者背压保护
+- 202601090130_ws_backpressure_hardening - WS 慢消费者背压治理（硬化方案）
+- 202601121934_codex_popup - Codex 任务结束弹窗提醒（脚本）
+- 202601121939_ws_ack_eventloop_isolation - 单聊 ACK 回切隔离（eventLoop 减负）
+- 202601122018_codex_global_notify_popup - Codex 全局完成弹窗（notify hook）
+- 202601131248_web-ui-revamp - Web 端 UI 微调（仿微信三栏）
+- 202601131700_ws_single_encode_postdb_isolation - 单聊尾延迟治理预研（WS 编码 offload / post-db 隔离）
+- 202601131424_ws_single_dbqueue_postdb_offload - 单聊尾延迟治理（encode 开关对照 + writer 串行优化）
+- 202601131631_ws_openloop_ack_isolation - 固定速率压测（open-loop）+ delivered/read ACK 合并开关
+- 202601140018_ws_single_inbound_queue_updatedat_debounce - 单聊尾延迟收敛（入站队列上限 + 会话 updatedAt 去抖）
+- 202601141742_ws_single_mainchain_speed - 单聊主链路提速（updated_at 异步化 + 串行队列 inline + 5 实例均衡 pinning）
+- 202601141925_ws_single_dbpool_hikari_alignment - 单聊性能回归（DB 线程池×连接池对齐 + 队列收紧）
+- 202601150002_singlechat_ensure_members_db_relief - 单聊 DB 减负（ensureMembers 去热路径）
+- 202601151243_ws_singlechat_two_phase_ack - 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams）
 
 ### 2025-12
 

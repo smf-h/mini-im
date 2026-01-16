@@ -1,4 +1,4 @@
-﻿package com.miniim.domain.service.impl;
+package com.miniim.domain.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -78,6 +78,21 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
         if (singleChatId <= 0 || userId <= 0 || msgId <= 0) {
             return;
         }
+
+        int updated = this.getBaseMapper().markDelivered(singleChatId, userId, msgId);
+        if (updated > 0) {
+            return;
+        }
+
+        boolean exists = this.exists(new LambdaQueryWrapper<SingleChatMemberEntity>()
+                .eq(SingleChatMemberEntity::getSingleChatId, singleChatId)
+                .eq(SingleChatMemberEntity::getUserId, userId)
+                .last("limit 1"));
+        if (exists) {
+            // MySQL：若 greatest(...) 结果不变，可能返回 0 rows affected；此时无需补建
+            return;
+        }
+
         ensureMember(singleChatId, userId);
         this.getBaseMapper().markDelivered(singleChatId, userId, msgId);
     }
@@ -87,6 +102,20 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
         if (singleChatId <= 0 || userId <= 0 || msgId <= 0) {
             return;
         }
+
+        int updated = this.getBaseMapper().markRead(singleChatId, userId, msgId);
+        if (updated > 0) {
+            return;
+        }
+
+        boolean exists = this.exists(new LambdaQueryWrapper<SingleChatMemberEntity>()
+                .eq(SingleChatMemberEntity::getSingleChatId, singleChatId)
+                .eq(SingleChatMemberEntity::getUserId, userId)
+                .last("limit 1"));
+        if (exists) {
+            return;
+        }
+
         ensureMember(singleChatId, userId);
         this.getBaseMapper().markRead(singleChatId, userId, msgId);
     }

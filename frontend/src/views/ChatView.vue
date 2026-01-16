@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// ChatView：单聊窗口（仿微信），包含消息流、已读状态与通话相关入口。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../services/api'
@@ -535,12 +536,52 @@ watch(
       <div class="headerMain">
         <div class="title">{{ peerName || peerUserId }}</div>
       </div>
-      <div class="row">
-        <button class="btn" :disabled="call.busy" @click="startVideoCall">视频通话</button>
-        <button class="btn" @click="openCallHistory">通话记录</button>
-        <button class="btn" @click="toggleDmMute">{{ dmMuted ? '已免打扰' : '免打扰' }}</button>
-        <button class="btn" @click="openUser(peerUserId)">对方主页</button>
-        <button class="btn" @click="resetAndLoad">刷新</button>
+      <div class="headerActions">
+        <button class="iconBtn" :disabled="call.busy" title="视频通话" aria-label="视频通话" @click="startVideoCall">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M15 8a3 3 0 0 1 3 3v2.2l2.4 1.6a1 1 0 0 1 .6.9v-7a1 1 0 0 0-1.6-.8L18 9.4V11a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3h9Zm0 2H6a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11a1 1 0 0 0-1-1Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="通话记录" aria-label="通话记录" @click="openCallHistory">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 4a8 8 0 1 1 0 16a8 8 0 0 1 0-16Zm0 2a6 6 0 1 0 0 12a6 6 0 0 0 0-12Zm1 2v4.2l2.7 1.6a1 1 0 0 1-1 1.7L11 13V8a1 1 0 1 1 2 0Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" :data-active="dmMuted" title="免打扰" aria-label="免打扰" @click="toggleDmMute">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 0 0-4-5.7V4a2 2 0 1 0-4 0v1.3A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Zm-2 1H8v-6a4 4 0 0 1 8 0v6Z"
+            />
+            <path
+              v-if="dmMuted"
+              fill="currentColor"
+              d="M4.3 3.3a1 1 0 0 1 1.4 0l16 16a1 1 0 1 1-1.4 1.4l-16-16a1 1 0 0 1 0-1.4Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="对方主页" aria-label="对方主页" @click="openUser(peerUserId)">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8Zm0 2c-4.4 0-8 2-8 4.5V20h16v-1.5c0-2.5-3.6-4.5-8-4.5Z"
+            />
+          </svg>
+        </button>
+        <button class="iconBtn" title="刷新" aria-label="刷新" @click="resetAndLoad">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 12.65-5.65Z"
+            />
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -640,6 +681,12 @@ watch(
   padding: 14px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--divider);
+}
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .headerMain {
   min-width: 0;

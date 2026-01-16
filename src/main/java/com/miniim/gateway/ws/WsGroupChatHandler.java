@@ -17,6 +17,8 @@ import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
+import com.miniim.gateway.config.WsPerfTraceProperties;
+import com.miniim.gateway.config.WsInboundQueueProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -37,6 +39,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Component
 @RequiredArgsConstructor
@@ -56,6 +59,8 @@ public class WsGroupChatHandler {
     private final WsPushService wsPushService;
     private final GroupChatDispatchService groupChatDispatchService;
     private final WsWriter wsWriter;
+    private final WsPerfTraceProperties perfTraceProps;
+    private final WsInboundQueueProperties inboundQueueProps;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
 
@@ -66,11 +71,25 @@ public class WsGroupChatHandler {
             wsWriter.writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
             return;
         }
-        WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId));
+        long enqueuedAtNs = System.nanoTime();
+        if (inboundQueueProps != null && inboundQueueProps.enabledEffective()) {
+            int maxPending = inboundQueueProps.maxPendingPerConnEffective();
+            WsChannelSerialQueue.tryEnqueue(channel, () -> handleSerial(ctx, msg, fromUserId, enqueuedAtNs), maxPending)
+                    .exceptionally(e -> {
+                        wsWriter.writeError(ctx, "server_busy", msg.getClientMsgId(), null);
+                        return null;
+                    });
+        } else {
+            WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId, enqueuedAtNs));
+        }
     }
 
-    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId) {
+    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId, long enqueuedAtNs) {
         CompletableFuture<Void> done = new CompletableFuture<>();
+
+        Channel channel = ctx.channel();
+        long serialStartNs = System.nanoTime();
+        long queueNs = serialStartNs - enqueuedAtNs;
 
         if (!validate(ctx, msg)) {
             done.complete(null);
@@ -85,11 +104,19 @@ public class WsGroupChatHandler {
         final String idempotencyKey = idempotency.key(fromUserId, "GROUP_CHAT:" + groupId, clientMsgId);
         final String sanitizedBody = forbiddenWordFilter.sanitize(msg.getBody());
 
+        final long dbSubmitNs = System.nanoTime();
+        final long[] perfNs = new long[9];
+        // 0=dbQueue,1=myMemberMs,2=idemMs,3=memberCacheGetMs,4=memberDbListMs,5=resolveImportantMs,6=saveMsgMs,7=updateGroupMs,8=mentionInsertMs
         CompletableFuture<Outcome> future = CompletableFuture.supplyAsync(() -> {
+            long dbStartNs = System.nanoTime();
+            perfNs[0] = dbStartNs - dbSubmitNs;
+
+            long t = System.nanoTime();
             GroupMemberEntity myMember = groupMemberMapper.selectOne(new LambdaQueryWrapper<GroupMemberEntity>()
                     .eq(GroupMemberEntity::getGroupId, groupId)
                     .eq(GroupMemberEntity::getUserId, fromUserId)
                     .last("limit 1"));
+            perfNs[1] = System.nanoTime() - t;
             if (myMember == null) {
                 return Outcome.error("not_group_member");
             }
@@ -99,17 +126,23 @@ public class WsGroupChatHandler {
                 return Outcome.error("group_speak_muted");
             }
 
+            t = System.nanoTime();
             ClientMsgIdIdempotency.Claim newClaim = new ClientMsgIdIdempotency.Claim();
             newClaim.setServerMsgId(serverMsgId);
             ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idempotencyKey, newClaim);
+            perfNs[2] = System.nanoTime() - t;
             if (existed != null) {
                 return Outcome.duplicate(existed.getServerMsgId());
             }
 
+            t = System.nanoTime();
             Set<Long> memberIds = groupMemberIdsCache.get(groupId);
+            perfNs[3] = System.nanoTime() - t;
             if (memberIds == null) {
+                t = System.nanoTime();
                 List<GroupMemberEntity> members = groupMemberMapper.selectList(new LambdaQueryWrapper<GroupMemberEntity>()
                         .eq(GroupMemberEntity::getGroupId, groupId));
+                perfNs[4] = System.nanoTime() - t;
                 memberIds = new HashSet<>();
                 if (members != null) {
                     for (GroupMemberEntity m : members) {
@@ -136,14 +169,22 @@ public class WsGroupChatHandler {
             messageEntity.setContent(sanitizedBody);
             messageEntity.setClientMsgId(clientMsgId);
 
+            t = System.nanoTime();
             Map<Long, MentionType> importantTargets = resolveImportantTargets(msg, fromUserId, groupId, memberIds);
+            perfNs[5] = System.nanoTime() - t;
 
+            t = System.nanoTime();
             messageService.save(messageEntity);
+            perfNs[6] = System.nanoTime() - t;
+
+            t = System.nanoTime();
             groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
                     .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
                     .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
+            perfNs[7] = System.nanoTime() - t;
 
             if (!importantTargets.isEmpty()) {
+                t = System.nanoTime();
                 List<MessageMentionEntity> rows = new ArrayList<>();
                 LocalDateTime now = LocalDateTime.now();
                 for (Map.Entry<Long, MentionType> e : importantTargets.entrySet()) {
@@ -157,11 +198,13 @@ public class WsGroupChatHandler {
                     rows.add(mm);
                 }
                 messageMentionMapper.insertBatch(rows);
+                perfNs[8] = System.nanoTime() - t;
             }
             return Outcome.ok(memberIds, importantTargets);
         }, dbExecutor).orTimeout(3, TimeUnit.SECONDS);
 
         future.whenComplete((out, error) -> {
+            long dbDoneNs = System.nanoTime();
             if (error != null) {
                 log.error("save group message failed: {}", error.toString());
                 try {
@@ -169,77 +212,125 @@ public class WsGroupChatHandler {
                 } catch (Exception e) {
                     log.debug("idem cleanup failed: key={}, err={}", idempotencyKey, e.toString());
                 }
-                ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", clientMsgId, serverMsgId));
+                wsWriter.writeError(channel, "internal_error", clientMsgId, serverMsgId);
                 done.complete(null);
                 return;
             }
             if (out == null) {
-                ctx.executor().execute(() -> wsWriter.writeError(ctx, "internal_error", clientMsgId, serverMsgId));
+                wsWriter.writeError(channel, "internal_error", clientMsgId, serverMsgId);
                 done.complete(null);
                 return;
             }
             if (out.reason != null) {
-                ctx.executor().execute(() -> wsWriter.writeError(ctx, out.reason, clientMsgId, null));
+                wsWriter.writeError(channel, out.reason, clientMsgId, null);
                 done.complete(null);
                 return;
             }
             if (out.duplicateServerMsgId != null) {
-                ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, clientMsgId, out.duplicateServerMsgId, AckType.SAVED.getDesc(), null));
+                wsWriter.writeAck(channel, fromUserId, clientMsgId, out.duplicateServerMsgId, AckType.SAVED.getDesc(), null);
                 done.complete(null);
                 return;
             }
 
-            ctx.executor().execute(() -> wsWriter.writeAck(ctx, fromUserId, clientMsgId, serverMsgId, AckType.SAVED.getDesc(), sanitizedBody));
+            ctx.executor().execute(() -> {
+                long dbToEventLoopNs = System.nanoTime() - dbDoneNs;
+                wsWriter.writeAck(ctx, fromUserId, clientMsgId, serverMsgId, AckType.SAVED.getDesc(), sanitizedBody);
 
-            WsEnvelope normal = new WsEnvelope();
-            normal.type = "GROUP_CHAT";
-            normal.from = fromUserId;
-            normal.groupId = groupId;
-            normal.clientMsgId = clientMsgId;
-            normal.serverMsgId = serverMsgId;
-            normal.msgType = msg.getMsgType();
-            normal.body = sanitizedBody;
-            normal.ts = ts;
+                WsEnvelope normal = new WsEnvelope();
+                normal.type = "GROUP_CHAT";
+                normal.from = fromUserId;
+                normal.groupId = groupId;
+                normal.clientMsgId = clientMsgId;
+                normal.serverMsgId = serverMsgId;
+                normal.msgType = msg.getMsgType();
+                normal.body = sanitizedBody;
+                normal.ts = ts;
 
-            WsEnvelope important = new WsEnvelope();
-            important.type = normal.type;
-            important.from = normal.from;
-            important.groupId = normal.groupId;
-            important.clientMsgId = normal.clientMsgId;
-            important.serverMsgId = normal.serverMsgId;
-            important.msgType = normal.msgType;
-            important.body = normal.body;
-            important.ts = normal.ts;
-            important.important = true;
+                WsEnvelope important = new WsEnvelope();
+                important.type = normal.type;
+                important.from = normal.from;
+                important.groupId = normal.groupId;
+                important.clientMsgId = normal.clientMsgId;
+                important.serverMsgId = normal.serverMsgId;
+                important.msgType = normal.msgType;
+                important.body = normal.body;
+                important.ts = normal.ts;
+                important.important = true;
 
-            WsEnvelope normalNotify = new WsEnvelope();
-            normalNotify.type = "GROUP_NOTIFY";
-            normalNotify.from = fromUserId;
-            normalNotify.groupId = groupId;
-            normalNotify.serverMsgId = serverMsgId;
-            normalNotify.ts = ts;
+                WsEnvelope normalNotify = new WsEnvelope();
+                normalNotify.type = "GROUP_NOTIFY";
+                normalNotify.from = fromUserId;
+                normalNotify.groupId = groupId;
+                normalNotify.serverMsgId = serverMsgId;
+                normalNotify.ts = ts;
 
-            WsEnvelope importantNotify = new WsEnvelope();
-            importantNotify.type = normalNotify.type;
-            importantNotify.from = normalNotify.from;
-            importantNotify.groupId = normalNotify.groupId;
-            importantNotify.serverMsgId = normalNotify.serverMsgId;
-            importantNotify.ts = normalNotify.ts;
-            importantNotify.important = true;
+                WsEnvelope importantNotify = new WsEnvelope();
+                importantNotify.type = normalNotify.type;
+                importantNotify.from = normalNotify.from;
+                importantNotify.groupId = normalNotify.groupId;
+                importantNotify.serverMsgId = normalNotify.serverMsgId;
+                importantNotify.ts = normalNotify.ts;
+                importantNotify.important = true;
 
-            groupChatDispatchService.dispatch(
-                    out.memberIds,
-                    fromUserId,
-                    out.importantTargets.keySet(),
-                    normal,
-                    important,
-                    normalNotify,
-                    importantNotify
-            );
-            done.complete(null);
+                long dispatchStartNs = System.nanoTime();
+                groupChatDispatchService.dispatch(
+                        out.memberIds,
+                        fromUserId,
+                        out.importantTargets.keySet(),
+                        normal,
+                        important,
+                        normalNotify,
+                        importantNotify
+                );
+                long dispatchNs = System.nanoTime() - dispatchStartNs;
+
+                maybeLogPerf(ctx, fromUserId, groupId, clientMsgId, serverMsgId, queueNs, dbToEventLoopNs, dispatchNs, perfNs, enqueuedAtNs, out.memberIds == null ? 0 : out.memberIds.size());
+                done.complete(null);
+            });
         });
 
         return done;
+    }
+
+    private void maybeLogPerf(ChannelHandlerContext ctx,
+                              long fromUserId,
+                              long groupId,
+                              String clientMsgId,
+                              String serverMsgId,
+                              long queueNs,
+                              long dbToEventLoopNs,
+                              long dispatchNs,
+                              long[] perfNs,
+                              long enqueuedAtNs,
+                              int memberCount) {
+        if (perfTraceProps == null || !perfTraceProps.enabledEffective()) {
+            return;
+        }
+        long nowNs = System.nanoTime();
+        long totalMs = TimeUnit.NANOSECONDS.toMillis(nowNs - enqueuedAtNs);
+        long slowMs = perfTraceProps.slowMsEffective();
+        double sampleRate = perfTraceProps.sampleRateEffective();
+        boolean sampled = sampleRate > 0 && ThreadLocalRandom.current().nextDouble() < sampleRate;
+        if (totalMs < slowMs && !sampled) {
+            return;
+        }
+
+        String cid = ctx.channel().attr(SessionRegistry.ATTR_CONN_ID).get();
+        log.info("ws_perf group_chat from={} groupId={} members={} cid={} clientMsgId={} serverMsgId={} totalMs={} queueMs={} dbQueueMs={} myMemberMs={} idemMs={} memberCacheGetMs={} memberDbListMs={} resolveImportantMs={} saveMsgMs={} updateGroupMs={} mentionInsertMs={} dbToEventLoopMs={} dispatchMs={}",
+                fromUserId, groupId, memberCount, cid, clientMsgId, serverMsgId,
+                totalMs,
+                TimeUnit.NANOSECONDS.toMillis(queueNs),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[0]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[1]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[2]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[3]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[4]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[5]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[6]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[7]),
+                TimeUnit.NANOSECONDS.toMillis(perfNs[8]),
+                TimeUnit.NANOSECONDS.toMillis(dbToEventLoopNs),
+                TimeUnit.NANOSECONDS.toMillis(dispatchNs));
     }
 
     private static class Outcome {

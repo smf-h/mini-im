@@ -64,34 +64,45 @@ try {
   # 3) Optional: read redis route keys via redis-cli and attach to output JSON
   if ($CheckRedis) {
     if (-not (Get-Command redis-cli -ErrorAction SilentlyContinue)) {
-      throw "redis-cli not found in PATH"
+      # Fallback: do not hard-fail when redis-cli is missing (common on Windows).
+      # Keep the smoke test runnable; record that Redis inspection is skipped.
+      $redis = [ordered]@{ skipped = $true; reason = "redis-cli not found in PATH" }
+      $result | Add-Member -NotePropertyName "redis" -NotePropertyValue $redis -Force
+      $CheckRedis = $false
     }
 
-    $redisArgs = @("-h", "$RedisHost", "-p", "$RedisPort")
-    if (-not [string]::IsNullOrWhiteSpace($RedisPassword)) {
-      $redisArgs += @("-a", "$RedisPassword")
-    }
+    if ($CheckRedis) {
+      $redisArgs = @("-h", "$RedisHost", "-p", "$RedisPort")
+      if (-not [string]::IsNullOrWhiteSpace($RedisPassword)) {
+        $redisArgs += @("-a", "$RedisPassword")
+      }
 
-    $redis = [ordered]@{}
-    foreach ($uid in @($UserA, $UserB)) {
-      $key = "im:gw:route:$uid"
-      $value = & redis-cli @redisArgs GET $key
-      $ttl = & redis-cli @redisArgs TTL $key
-      $redis["$key"] = [ordered]@{ value = $value; ttlSeconds = $ttl }
-    }
+      $redis = [ordered]@{}
+      foreach ($uid in @($UserA, $UserB)) {
+        $key = "im:gw:route:$uid"
+        $value = & redis-cli @redisArgs GET $key
+        $ttl = & redis-cli @redisArgs TTL $key
+        $redis["$key"] = [ordered]@{ value = $value; ttlSeconds = $ttl }
+      }
 
-    $result | Add-Member -NotePropertyName "redis" -NotePropertyValue $redis -Force
+      $result | Add-Member -NotePropertyName "redis" -NotePropertyValue $redis -Force
+    }
   }
 
   # 3) Optional: query DB status via mysql CLI and attach to output JSON
   if ($CheckDb) {
     if (-not (Get-Command mysql -ErrorAction SilentlyContinue)) {
-      throw "mysql CLI not found in PATH"
+      # Fallback: keep smoke test runnable when mysql CLI is missing.
+      $db = [ordered]@{ skipped = $true; reason = "mysql CLI not found in PATH" }
+      $result | Add-Member -NotePropertyName "db" -NotePropertyValue $db -Force
+      $CheckDb = $false
     }
 
-    if ([string]::IsNullOrWhiteSpace($DbPassword)) {
-      if (-not [string]::IsNullOrWhiteSpace($env:MYSQL_PWD)) {
-        $DbPassword = $env:MYSQL_PWD
+    if ($CheckDb) {
+      if ([string]::IsNullOrWhiteSpace($DbPassword)) {
+        if (-not [string]::IsNullOrWhiteSpace($env:MYSQL_PWD)) {
+          $DbPassword = $env:MYSQL_PWD
+        }
       }
     }
 

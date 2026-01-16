@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+// ContactsView：通讯录模块（仿微信三栏），左侧导航 + 好友列表，支持搜索过滤。
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import UiAvatar from '../components/UiAvatar.vue'
 import UiListItem from '../components/UiListItem.vue'
@@ -20,6 +21,20 @@ const users = useUserStore()
 const friends = ref<Id[]>([])
 const friendsLoading = ref(false)
 const friendsError = ref<string | null>(null)
+
+const query = ref('')
+
+const queryNorm = computed(() => query.value.trim().toLowerCase())
+
+const filteredFriends = computed(() => {
+  const q = queryNorm.value
+  if (!q) return friends.value
+  return friends.value.filter((fid) => {
+    const id = String(fid).toLowerCase()
+    const name = users.displayName(String(fid)).toLowerCase()
+    return id.includes(q) || name.includes(q)
+  })
+})
 
 const hasPendingFriendRequests = ref(false)
 const wsCursor = ref(0)
@@ -177,6 +192,19 @@ watch(
         </UiListItem>
       </div>
 
+      <div class="panelSearch">
+        <div class="searchBox" role="search">
+          <svg class="iconSvg" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M10 4a6 6 0 1 0 3.6 10.8l4.3 4.3a1 1 0 0 0 1.4-1.4l-4.3-4.3A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8a4 4 0 0 1 0-8Z"
+            />
+          </svg>
+          <input v-model="query" class="searchInput" placeholder="搜索好友" aria-label="搜索好友" />
+          <button v-if="query" class="searchClear" type="button" aria-label="清空搜索" @click="query = ''">×</button>
+        </div>
+      </div>
+
       <div class="friendsHeader">
         <div class="muted">好友</div>
         <button class="textBtn" type="button" @click="loadFriends">刷新</button>
@@ -185,13 +213,14 @@ watch(
       <div class="friendsList">
         <div v-if="friendsLoading" class="tail muted">加载中…</div>
         <div v-else-if="friendsError" class="tail error">{{ friendsError }}</div>
-        <UiListItem v-for="fid in friends" :key="fid" :to="`/contacts/u/${fid}`">
+        <UiListItem v-for="fid in filteredFriends" :key="fid" :to="`/contacts/u/${fid}`">
           <template #left>
             <UiAvatar :text="users.displayName(fid)" :seed="fid" :size="40" />
           </template>
           <div class="friendName">{{ users.displayName(fid) }}</div>
         </UiListItem>
-        <div v-if="!friendsLoading && !friendsError && friends.length === 0" class="tail muted">暂无好友</div>
+        <div v-if="!friendsLoading && !friendsError && queryNorm && filteredFriends.length === 0" class="tail muted">无匹配结果</div>
+        <div v-else-if="!friendsLoading && !friendsError && friends.length === 0" class="tail muted">暂无好友</div>
       </div>
     </aside>
 
@@ -265,6 +294,10 @@ watch(
   position: relative;
 }
 .section {
+  border-bottom: 1px solid var(--divider);
+}
+.panelSearch {
+  padding: 10px 14px;
   border-bottom: 1px solid var(--divider);
 }
 .iconPill {
