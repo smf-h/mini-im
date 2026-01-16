@@ -124,7 +124,10 @@ if ($AutoTuneLocalThreads) {
   # Otherwise, scaling instances can accidentally shrink total JDBC connections and trigger db queue timeouts.
   $targetDbTotal = [Math]::Max(8, [Math]::Min($cpu, 24))
   $suggestDb = [Math]::Ceiling($targetDbTotal / [Math]::Max(1, $Instances))
-  $suggestDb = [Math]::Max(2, [Math]::Min(6, [int]$suggestDb))
+  # Allow higher per-instance DB concurrency when instance count is small; otherwise 1-instance may be under-provisioned
+  # and hit `server_busy` due to dbExecutor rejection/queue buildup under the same offered load.
+  $maxDbPerInst = if ($Instances -le 2) { 12 } elseif ($Instances -le 4) { 8 } else { 6 }
+  $suggestDb = [Math]::Max(2, [Math]::Min($maxDbPerInst, [int]$suggestDb))
 
   if (-not $PSBoundParameters.ContainsKey("NettyBossThreads")) { $NettyBossThreads = 1 }
   if (-not $PSBoundParameters.ContainsKey("NettyWorkerThreads") -and $NettyWorkerThreads -le 0) { $NettyWorkerThreads = $suggestNettyWorker }

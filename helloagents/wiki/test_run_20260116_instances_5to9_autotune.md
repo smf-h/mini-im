@@ -4,6 +4,7 @@
 
 - **单机（同一台机器）多 JVM 多实例并不会“实例越多越快”**：存在明显拐点；在本机环境下，**5~7 实例**能同时做到低延迟且无 `internal_error`，继续加到 8/9 会出现 DB 超时导致的 `ERROR reason=internal_error` 上升。
 - 这轮“巨大突破”的本质：**限制每实例 Netty worker/eventLoop 线程数 + DB/JDBC 总并发稳定化**，避免“实例数上去→线程数爆炸→上下文切换/GC/锁竞争→DB 排队→3s 超时→internal_error”。
+ - 另见：`helloagents/wiki/test_run_20260116_instances_1to4_autotune.md:1`（补齐 1~4 实例对照，帮助你判断“单实例/双实例是否更适合本机基线”）。
 
 ## 1. 测试配置（固定不变的口径）
 
