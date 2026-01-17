@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * WS 多实例路由存储（Redis）：
@@ -23,6 +24,14 @@ import java.util.Map;
 public class WsRouteStore {
 
     private static final String ROUTE_KEY_PREFIX = "im:gw:route:";
+
+    /**
+     * Redis 故障时做 fail-fast：避免每次路由查询都阻塞在 Redis 连接/超时上，从而把尾延迟放大成“雪崩”。
+     *
+     * <p>注意：这是“可用性优先”的折中——短时间内可能导致跨实例路由能力下降（本来 Redis 已不可用）。</p>
+     */
+    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;
     private final String serverId;
@@ -69,17 +78,24 @@ public class WsRouteStore {
     }
 
     public RouteInfo get(long userId) {
+        if (shouldFailFast()) {
+            return null;
+        }
         String key = routeKey(userId);
         try {
             String raw = redis.opsForValue().get(key);
             return parse(raw);
         } catch (Exception e) {
             log.debug("ws route get failed: userId={}, err={}", userId, e.toString());
+            markRedisDown();
             return null;
         }
     }
 
     public RouteInfo setAndGetOld(long userId, String connId, Duration ttl) {
+        if (shouldFailFast()) {
+            return null;
+        }
         String key = routeKey(userId);
         String value = format(serverId, connId);
         long ttlSeconds = ttl == null ? 0 : ttl.toSeconds();
@@ -91,11 +107,15 @@ public class WsRouteStore {
             return parse(old);
         } catch (Exception e) {
             log.warn("ws route set failed, redis unavailable? userId={}, serverId={}, err={}", userId, serverId, e.toString());
+            markRedisDown();
             return null;
         }
     }
 
     public boolean expireIfMatch(long userId, String connId, Duration ttl) {
+        if (shouldFailFast()) {
+            return false;
+        }
         String key = routeKey(userId);
         String expected = format(serverId, connId);
         long ttlSeconds = ttl == null ? 0 : ttl.toSeconds();
@@ -107,11 +127,15 @@ public class WsRouteStore {
             return ok != null && ok > 0;
         } catch (Exception e) {
             log.debug("ws route expire failed: userId={}, serverId={}, err={}", userId, serverId, e.toString());
+            markRedisDown();
             return false;
         }
     }
 
     public boolean deleteIfMatch(long userId, String connId) {
+        if (shouldFailFast()) {
+            return false;
+        }
         String key = routeKey(userId);
         String expected = format(serverId, connId);
         try {
@@ -119,6 +143,7 @@ public class WsRouteStore {
             return ok != null && ok > 0;
         } catch (Exception e) {
             log.debug("ws route delete failed: userId={}, serverId={}, err={}", userId, serverId, e.toString());
+            markRedisDown();
             return false;
         }
     }
@@ -139,6 +164,9 @@ public class WsRouteStore {
     public Map<Long, RouteInfo> batchGet(List<Long> userIds) {
         if (userIds == null || userIds.isEmpty()) {
             return Map.of();
+        }
+        if (shouldFailFast()) {
+            return null;
         }
         List<Long> ids = new ArrayList<>(userIds.size());
         List<String> keys = new ArrayList<>(userIds.size());
@@ -170,6 +198,7 @@ public class WsRouteStore {
             return out;
         } catch (Exception e) {
             log.debug("ws route batch get failed: size={}, err={}", ids.size(), e.toString());
+            markRedisDown();
             return null;
         }
     }
@@ -195,5 +224,22 @@ public class WsRouteStore {
     }
 
     public record RouteInfo(String serverId, String connId, String raw) {
+    }
+
+    private static boolean shouldFailFast() {
+        return System.currentTimeMillis() < REDIS_UNAVAILABLE_UNTIL_MS.get();
+    }
+
+    private static void markRedisDown() {
+        long until = System.currentTimeMillis() + REDIS_FAIL_FAST_MS;
+        while (true) {
+            long prev = REDIS_UNAVAILABLE_UNTIL_MS.get();
+            if (prev >= until) {
+                return;
+            }
+            if (REDIS_UNAVAILABLE_UNTIL_MS.compareAndSet(prev, until)) {
+                return;
+            }
+        }
     }
 }

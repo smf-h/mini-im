@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 客户端请求幂等（ClientMsgId）：用 (userId + biz + clientMsgId) 作为 key。
@@ -23,6 +24,12 @@ import java.time.Duration;
 public class ClientMsgIdIdempotency {
 
     private static final String REDIS_KEY_PREFIX = "im:idem:client_msg_id:";
+
+    /**
+     * Redis 故障时做 fail-fast：幂等只是保护阀，Redis 不可用时直接回退为本机 best-effort。
+     */
+    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     @Getter
     private final ClientMsgIdCaffeineProperties props;
@@ -65,6 +72,9 @@ public class ClientMsgIdIdempotency {
         }
 
         // Redis 优先（跨实例），失败则降级本机缓存。
+        if (shouldFailFast()) {
+            return cache.asMap().putIfAbsent(key, claim);
+        }
         try {
             String redisKey = redisKey(key);
             boolean ok = Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(redisKey, claim.getServerMsgId(), ttl()));
@@ -84,6 +94,7 @@ public class ClientMsgIdIdempotency {
             return cache.asMap().putIfAbsent(key, claim);
         } catch (Exception e) {
             log.debug("idem redis putIfAbsent failed: key={}, err={}", key, e.toString());
+            markRedisDown();
             return cache.asMap().putIfAbsent(key, claim);
         }
     }
@@ -92,10 +103,14 @@ public class ClientMsgIdIdempotency {
         if (!props.isEnabled()) {
             return;
         }
+        if (shouldFailFast()) {
+            return;
+        }
         try {
             redis.delete(redisKey(key));
         } catch (Exception e) {
             log.debug("idem redis delete failed: key={}, err={}", key, e.toString());
+            markRedisDown();
         }
     }
 
@@ -109,5 +124,22 @@ public class ClientMsgIdIdempotency {
 
     private static String redisKey(String key) {
         return REDIS_KEY_PREFIX + key;
+    }
+
+    private static boolean shouldFailFast() {
+        return System.currentTimeMillis() < REDIS_UNAVAILABLE_UNTIL_MS.get();
+    }
+
+    private static void markRedisDown() {
+        long until = System.currentTimeMillis() + REDIS_FAIL_FAST_MS;
+        while (true) {
+            long prev = REDIS_UNAVAILABLE_UNTIL_MS.get();
+            if (prev >= until) {
+                return;
+            }
+            if (REDIS_UNAVAILABLE_UNTIL_MS.compareAndSet(prev, until)) {
+                return;
+            }
+        }
     }
 }

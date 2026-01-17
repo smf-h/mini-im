@@ -5,6 +5,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Component
@@ -12,6 +13,14 @@ public class SessionVersionStore {
 
     private static final String KEY_PREFIX = "im:auth:sv:";
     private static final Duration DEFAULT_TTL = Duration.ofDays(90);
+
+    /**
+     * Redis 故障时做 fail-fast：避免鉴权链路被 Redis 超时放大尾延迟。
+     *
+     * <p>此处采用 fail-open：Redis 不可用时只校验 JWT 自身。</p>
+     */
+    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;
 
@@ -26,6 +35,9 @@ public class SessionVersionStore {
         if (userId <= 0) {
             return 0;
         }
+        if (shouldFailFast()) {
+            return 0;
+        }
         String key = key(userId);
         try {
             Long v = redis.opsForValue().increment(key);
@@ -36,6 +48,7 @@ public class SessionVersionStore {
             return v;
         } catch (Exception e) {
             log.warn("bump sessionVersion failed, redis unavailable? userId={}, err={}", userId, e.toString());
+            markRedisDown();
             return 0;
         }
     }
@@ -43,6 +56,9 @@ public class SessionVersionStore {
     public long current(long userId) {
         if (userId <= 0) {
             return 0;
+        }
+        if (shouldFailFast()) {
+            return -1;
         }
         try {
             String raw = redis.opsForValue().get(key(userId));
@@ -52,6 +68,7 @@ public class SessionVersionStore {
             return Long.parseLong(raw.trim());
         } catch (Exception e) {
             log.debug("get sessionVersion failed: userId={}, err={}", userId, e.toString());
+            markRedisDown();
             return -1;
         }
     }
@@ -70,5 +87,22 @@ public class SessionVersionStore {
 
     private String key(long userId) {
         return KEY_PREFIX + userId;
+    }
+
+    private static boolean shouldFailFast() {
+        return System.currentTimeMillis() < REDIS_UNAVAILABLE_UNTIL_MS.get();
+    }
+
+    private static void markRedisDown() {
+        long until = System.currentTimeMillis() + REDIS_FAIL_FAST_MS;
+        while (true) {
+            long prev = REDIS_UNAVAILABLE_UNTIL_MS.get();
+            if (prev >= until) {
+                return;
+            }
+            if (REDIS_UNAVAILABLE_UNTIL_MS.compareAndSet(prev, until)) {
+                return;
+            }
+        }
     }
 }
