@@ -98,6 +98,8 @@ param(
   [string]$RedisHost = "127.0.0.1",
   [int]$RedisPort = 6379,
   [int]$RedisDatabase = 0,
+  [int]$RedisConnectTimeoutMs = 500,
+  [int]$RedisTimeoutMs = 500,
 
   [string]$Password = "p",
 
@@ -331,6 +333,8 @@ function Start-Instance([int]$Index) {
   if ($RedisHost -and $RedisHost.Trim().Length -gt 0) { [void]$argList.Add("--spring.data.redis.host=$RedisHost") }
   if ($RedisPort -gt 0) { [void]$argList.Add("--spring.data.redis.port=$RedisPort") }
   if ($RedisDatabase -ge 0) { [void]$argList.Add("--spring.data.redis.database=$RedisDatabase") }
+  if ($RedisConnectTimeoutMs -gt 0) { [void]$argList.Add("--spring.data.redis.connect-timeout=$($RedisConnectTimeoutMs)ms") }
+  if ($RedisTimeoutMs -gt 0) { [void]$argList.Add("--spring.data.redis.timeout=$($RedisTimeoutMs)ms") }
 
   # Make IdWorker (MyBatis-Plus ASSIGN_ID) deterministic per local instance to avoid Snowflake collisions across JVM processes.
   [void]$argList.Add("--im.id.datacenter-id=1")
