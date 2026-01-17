@@ -17,6 +17,7 @@ import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.GroupService;
 import com.miniim.domain.service.MessageService;
+import com.miniim.gateway.config.WsGroupUpdatedAtDebounceProperties;
 import com.miniim.gateway.config.WsPerfTraceProperties;
 import com.miniim.gateway.config.WsInboundQueueProperties;
 import com.miniim.gateway.session.SessionRegistry;
@@ -38,6 +39,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -61,8 +63,12 @@ public class WsGroupChatHandler {
     private final WsWriter wsWriter;
     private final WsPerfTraceProperties perfTraceProps;
     private final WsInboundQueueProperties inboundQueueProps;
+    private final GroupUpdatedAtDebouncer groupUpdatedAtDebouncer;
+    private final WsGroupUpdatedAtDebounceProperties groupUpdatedAtProps;
     @Qualifier("imDbExecutor")
     private final Executor dbExecutor;
+    @Qualifier("imPostDbExecutor")
+    private final Executor postDbExecutor;
 
     public void handle(ChannelHandlerContext ctx, WsEnvelope msg) {
         Channel channel = ctx.channel();
@@ -177,11 +183,17 @@ public class WsGroupChatHandler {
             messageService.save(messageEntity);
             perfNs[6] = System.nanoTime() - t;
 
-            t = System.nanoTime();
-            groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
-                    .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
-                    .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
-            perfNs[7] = System.nanoTime() - t;
+            if (groupUpdatedAtProps != null && groupUpdatedAtProps.inlineDbEffective()) {
+                // Legacy-like mode: update group.updated_at inline in DB task (higher DB write amplification).
+                t = System.nanoTime();
+                groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
+                        .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
+                        .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
+                perfNs[7] = System.nanoTime() - t;
+            } else {
+                // Default: offload group.updated_at to post-db with debounce (lower DB write amplification).
+                perfNs[7] = 0L;
+            }
 
             if (!importantTargets.isEmpty()) {
                 t = System.nanoTime();
@@ -283,13 +295,52 @@ public class WsGroupChatHandler {
                         importantNotify
                 );
                 long dispatchNs = System.nanoTime() - dispatchStartNs;
-
+                
                 maybeLogPerf(ctx, fromUserId, groupId, clientMsgId, serverMsgId, queueNs, dbToEventLoopNs, dispatchNs, perfNs, enqueuedAtNs, out.memberIds == null ? 0 : out.memberIds.size());
+                if (groupId > 0
+                        && (groupUpdatedAtProps == null || !groupUpdatedAtProps.inlineDbEffective())
+                        && shouldUpdateGroupNow(groupId)) {
+                    scheduleUpdateGroupUpdatedAt(groupId);
+                }
                 done.complete(null);
             });
         });
 
         return done;
+    }
+
+    private boolean shouldUpdateGroupNow(long groupId) {
+        long nowMs = System.currentTimeMillis();
+        return groupUpdatedAtDebouncer == null || groupUpdatedAtDebouncer.shouldUpdateNow(groupId, nowMs);
+    }
+
+    private void scheduleUpdateGroupUpdatedAt(long groupId) {
+        if (groupUpdatedAtProps != null && groupUpdatedAtProps.syncUpdateEffective()) {
+            try {
+                groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
+                        .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
+                        .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
+            } catch (Exception e) {
+                log.debug("update group.updated_at sync failed: groupId={}, err={}", groupId, e.toString());
+            }
+            return;
+        }
+
+        try {
+            postDbExecutor.execute(() -> {
+                try {
+                    groupService.update(new LambdaUpdateWrapper<com.miniim.domain.entity.GroupEntity>()
+                            .eq(com.miniim.domain.entity.GroupEntity::getId, groupId)
+                            .set(com.miniim.domain.entity.GroupEntity::getUpdatedAt, LocalDateTime.now()));
+                } catch (Exception e) {
+                    log.debug("update group.updated_at async failed: groupId={}, err={}", groupId, e.toString());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            log.debug("update group.updated_at dropped: post-db executor busy, groupId={}", groupId);
+        } catch (Exception e) {
+            log.debug("update group.updated_at schedule failed: groupId={}, err={}", groupId, e.toString());
+        }
     }
 
     private void maybeLogPerf(ChannelHandlerContext ctx,

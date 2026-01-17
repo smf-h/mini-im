@@ -51,6 +51,10 @@ param(
   [int]$SingleChatUpdatedAtDebounceWindowMs = 1000,
   [bool]$SingleChatUpdatedAtSyncUpdate = $false,
 
+  [bool]$GroupUpdatedAtDebounceEnabled = $true,
+  [int]$GroupUpdatedAtDebounceWindowMs = 1000,
+  [string]$GroupUpdatedAtMode = "post_db",
+
   [int]$DurationSmallSeconds = 60,
   [int]$DurationConnectSeconds = 30,
   [int]$WarmupMs = 1500,
@@ -350,6 +354,9 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.debounce-enabled=$($SingleChatUpdatedAtDebounceEnabled.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.debounce-window-ms=$SingleChatUpdatedAtDebounceWindowMs")
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.sync-update=$($SingleChatUpdatedAtSyncUpdate.ToString().ToLower())")
+  [void]$argList.Add("--im.gateway.ws.group.updated-at.debounce-enabled=$($GroupUpdatedAtDebounceEnabled.ToString().ToLower())")
+  [void]$argList.Add("--im.gateway.ws.group.updated-at.debounce-window-ms=$GroupUpdatedAtDebounceWindowMs")
+  if ($GroupUpdatedAtMode -and $GroupUpdatedAtMode.Trim().Length -gt 0) { [void]$argList.Add("--im.gateway.ws.group.updated-at.mode=$GroupUpdatedAtMode") }
   [void]$argList.Add("--im.gateway.ws.ack.batch-enabled=$($AckBatchEnabled.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.ack.batch-window-ms=$AckBatchWindowMs")
   [void]$argList.Add("--im.gateway.ws.resend.after-auth-enabled=$($ResendAfterAuthEnabled.ToString().ToLower())")

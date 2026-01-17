@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration;
         WsAckBatchProperties.class,
         WsResendProperties.class,
         WsSingleChatUpdatedAtDebounceProperties.class,
+        WsGroupUpdatedAtDebounceProperties.class,
         WsSingleChatTwoPhaseProperties.class
 })
 public class GatewayConfig {

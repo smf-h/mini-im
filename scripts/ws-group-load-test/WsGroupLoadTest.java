@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 public class WsGroupLoadTest {
 
@@ -61,6 +62,12 @@ public class WsGroupLoadTest {
         final AtomicLong reorderByServerMsgId = new AtomicLong();
         final ConcurrentLinkedQueue<Long> e2eLatencyMs = new ConcurrentLinkedQueue<>();
         final AtomicLong wsError = new AtomicLong();
+        final LongAdder wsErrorSendFail = new LongAdder();
+        final ConcurrentHashMap<String, LongAdder> wsErrorByReason = new ConcurrentHashMap<>();
+        final ConcurrentLinkedQueue<String> wsErrorSamples = new ConcurrentLinkedQueue<>();
+        final AtomicInteger wsErrorSampleSize = new AtomicInteger(0);
+        final int wsErrorSampleMax = 5;
+        final AtomicBoolean stopping = new AtomicBoolean(false);
 
         final AtomicBoolean dupCapped = new AtomicBoolean(false);
     }
@@ -105,6 +112,7 @@ public class WsGroupLoadTest {
         final int seenMax = 100_000;
 
         volatile WebSocket ws;
+        private final StringBuilder textBuf = new StringBuilder();
 
         ClientCtx(Args args, Metrics metrics, HttpClient http, long userId, String token, boolean sender, boolean sampleReceiver, long groupId) {
             this.args = args;
@@ -149,7 +157,15 @@ public class WsGroupLoadTest {
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            String s = data.toString();
+            if (data != null) {
+                textBuf.append(data);
+            }
+            if (!last) {
+                webSocket.request(1);
+                return null;
+            }
+            String s = textBuf.toString();
+            textBuf.setLength(0);
             Map<String, Object> msg = parseJsonShallow(s);
             String type = asString(msg.get("type"));
             if ("AUTH_OK".equals(type)) {
@@ -158,7 +174,21 @@ public class WsGroupLoadTest {
             } else if ("AUTH_FAIL".equals(type)) {
                 metrics.authFail.incrementAndGet();
             } else if ("ERROR".equals(type)) {
+                if (metrics.stopping.get()) {
+                    webSocket.request(1);
+                    return null;
+                }
                 metrics.wsError.incrementAndGet();
+                String reason = asString(msg.get("reason"));
+                if (reason == null || reason.isBlank()) {
+                    reason = "unknown";
+                }
+                metrics.wsErrorByReason.computeIfAbsent(reason, k -> new LongAdder()).increment();
+                if (metrics.wsErrorSampleSize.get() < metrics.wsErrorSampleMax) {
+                    if (metrics.wsErrorSampleSize.incrementAndGet() <= metrics.wsErrorSampleMax) {
+                        metrics.wsErrorSamples.add(s);
+                    }
+                }
             } else if ("ACK".equals(type)) {
                 String ackType = asString(msg.get("ackType"));
                 if ("saved".equals(ackType)) {
@@ -217,13 +247,36 @@ public class WsGroupLoadTest {
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
             authed.set(false);
+            if (metrics.stopping.get()) {
+                return null;
+            }
+            // Count abnormal closes as wsError (but keep it explainable via errorsByReason).
+            if (statusCode != 1000) {
+                metrics.wsError.incrementAndGet();
+                String bucket = "close_" + statusCode;
+                metrics.wsErrorByReason.computeIfAbsent(bucket, k -> new LongAdder()).increment();
+                if (metrics.wsErrorSampleSize.get() < metrics.wsErrorSampleMax) {
+                    if (metrics.wsErrorSampleSize.incrementAndGet() <= metrics.wsErrorSampleMax) {
+                        metrics.wsErrorSamples.add("onClose status=" + statusCode + ", reason=" + reason);
+                    }
+                }
+            }
             return null;
         }
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             authed.set(false);
+            if (metrics.stopping.get()) {
+                return;
+            }
             metrics.wsError.incrementAndGet();
+            metrics.wsErrorByReason.computeIfAbsent("on_error", k -> new LongAdder()).increment();
+            if (metrics.wsErrorSampleSize.get() < metrics.wsErrorSampleMax) {
+                if (metrics.wsErrorSampleSize.incrementAndGet() <= metrics.wsErrorSampleMax) {
+                    metrics.wsErrorSamples.add("onError " + (error == null ? "null" : error.toString()));
+                }
+            }
         }
 
         private boolean trackUniqueLocal(String clientMsgId) {
@@ -324,7 +377,14 @@ public class WsGroupLoadTest {
 
                 m.msgSent.incrementAndGet();
                 ws.sendText(msg, true).whenComplete((ignored, err) -> {
-                    if (err != null) m.wsError.incrementAndGet();
+                    if (err != null) {
+                        if (m.stopping.get()) {
+                            return;
+                        }
+                        m.wsError.incrementAndGet();
+                        m.wsErrorSendFail.increment();
+                        m.wsErrorByReason.computeIfAbsent("send_fail", k -> new LongAdder()).increment();
+                    }
                 });
             }
         }, 0, args.msgIntervalMs, TimeUnit.MILLISECONDS);
@@ -333,6 +393,7 @@ public class WsGroupLoadTest {
             Thread.sleep(1000);
         }
 
+        m.stopping.set(true);
         for (ClientCtx c : clients) c.close();
         scheduler.shutdownNow();
         http.executor().ifPresent(e -> ((java.util.concurrent.ExecutorService) e).shutdownNow());
@@ -370,8 +431,27 @@ public class WsGroupLoadTest {
         g.put("reorderByServerMsgId", m.reorderByServerMsgId.get());
         g.put("e2eMs", pctJson(e2e));
         out.put("groupChat", g);
-        out.put("errors", Map.of("wsError", m.wsError.get()));
+        Map<String, Object> errors = new LinkedHashMap<>();
+        errors.put("wsError", m.wsError.get());
+        errors.put("sendFail", m.wsErrorSendFail.sum());
+        errors.put("errorsByReason", toPlainCountMap(m.wsErrorByReason));
+        errors.put("samples", new ArrayList<>(m.wsErrorSamples));
+        out.put("errors", errors);
         System.out.println(toJson(out));
+    }
+
+    private static Map<String, Object> toPlainCountMap(ConcurrentHashMap<String, LongAdder> map) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (map == null || map.isEmpty()) {
+            return out;
+        }
+        for (Map.Entry<String, LongAdder> e : map.entrySet()) {
+            if (e.getKey() == null) continue;
+            long v = e.getValue() == null ? 0L : e.getValue().sum();
+            if (v <= 0) continue;
+            out.put(e.getKey(), v);
+        }
+        return out;
     }
 
     private static String pickWsUrl(List<String> urls, long userId) {
