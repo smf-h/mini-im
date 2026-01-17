@@ -66,6 +66,7 @@
 | 202601141925 | 单聊性能回归（DB 线程池×连接池对齐 + 队列收紧） | 优化 | ?已完成 | helloagents/history/2026-01/202601141925_ws_single_dbpool_hikari_alignment/ |
 | 202601150002 | 单聊 DB 减负（ensureMembers 去热路径） | 优化 | ?已完成 | helloagents/history/2026-01/202601150002_singlechat_ensure_members_db_relief/ |
 | 202601151243 | 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams） | 优化 | ?已完成 | helloagents/history/2026-01/202601151243_ws_singlechat_two_phase_ack/ |
+| 202601171836 | 全链路性能顶尖化（Redis down 可控退化 + 压测口径/脚本完善） | 优化 | ?已完成 | helloagents/history/2026-01/202601171836_perf_top_hardware/ |
 
 ---
 
@@ -106,6 +107,7 @@
 - 202601141925_ws_single_dbpool_hikari_alignment - 单聊性能回归（DB 线程池×连接池对齐 + 队列收紧）
 - 202601150002_singlechat_ensure_members_db_relief - 单聊 DB 减负（ensureMembers 去热路径）
 - 202601151243_ws_singlechat_two_phase_ack - 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams）
+- 202601171836_perf_top_hardware - 全链路性能顶尖化（Redis down 可控退化 + 压测口径/脚本完善）
 
 ### 2025-12
 

@@ -78,6 +78,10 @@
 - WS：连接存活期间对 `sessionVersion` 做按连接限频复验，并在心跳路径（client ping / writer-idle）检测失效连接，降低 Pub/Sub 丢 KICK 时“旧连接继续存活”的风险
 - WS：开启 reader-idle 检测并在 writer-idle 发送 WS ping，降低僵尸连接导致的“假在线/TTL 续命”
 - WS：入站帧增加轻量限流（连接级 + 用户级）与协议违规阈值断连，并显式限制 WS 文本帧最大 payload，降低刷包与超大 JSON 的风险
+- 稳定性/性能：Redis down 时群成员缓存（`GroupMemberIdsCache`）增加 fail-fast + 本机兜底，避免群聊链路被 Redis 超时放大为秒级尾延迟
+- 稳定性/性能：`RedisJsonCache` 增加 fail-fast，Redis 不可用时避免 cache 读写反复超时造成雪崩
+- 性能：群聊本机 fanout 复用序列化结果（prepare once, write many），并补齐 `ByteBuf` 释放保护（降低 CPU/GC 上界）
+- 测试：`scripts/ws-cluster-5x-test/run.ps1` 在 `-SkipRedisCheck`（常用于 Redis down 专测）时默认跳过 cluster smoke，避免误报
 - WS：避免重复 `AUTH` 导致重复离线补发（同一连接仅补发一次），补齐补发失败日志上下文；`WsCron` 调度间隔配置对齐为 `im.cron.resend.fixed-delay-ms` 并兼容旧 `im.cron.scan-dropped.fixed-delay-ms`
 - WS：补发逻辑抽离为 `WsResendService`，`WsFrameHandler/WsCron` 仅负责门禁与调度，减少重复代码
 - WS：`CALL_*` 信令处理抽离为 `WsCallHandler`（占用/超时/落库/转发），进一步瘦身 `WsFrameHandler`

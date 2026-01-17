@@ -54,6 +54,7 @@
   - Redis 覆盖（用于“Redis down/抖动”专测）：
     - `-RedisHost/-RedisPort/-RedisDatabase`：把网关实例指向指定 Redis
     - `-SkipRedisCheck`：跳过 Redis 端口连通性检查（例如把 `-RedisPort 1` 用作“模拟 Redis 不可用”）
+      - 说明：当使用 `-SkipRedisCheck` 时，`scripts/ws-cluster-5x-test/run.ps1` 会默认跳过 cluster smoke（除非显式指定 `-SkipSmoke:$false`），避免在 Redis down 场景下产生“必然失败”的误报。
     - `-RedisConnectTimeoutMs/-RedisTimeoutMs`：控制 Redis 连接/命令超时（默认 500ms），用于减少 Redis 不可用时的“阻塞型抖动”
 
 ### 群聊 push 压测（含乱序/重复统计）
