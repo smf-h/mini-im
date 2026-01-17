@@ -139,11 +139,13 @@ public class GroupChatDispatchService {
                 continue;
             }
             if (serverId.equals(localServerId)) {
-                for (Long uid : uids) {
-                    if (uid == null || uid <= 0) {
-                        continue;
+                try (WsWriter.PreparedBytes prepared = wsPushService.prepareBytes(env)) {
+                    for (Long uid : uids) {
+                        if (uid == null || uid <= 0) {
+                            continue;
+                        }
+                        wsPushService.pushToUserLocalOnly(uid, env, prepared);
                     }
-                    wsPushService.pushToUserLocalOnly(uid, env);
                 }
             } else {
                 clusterBus.publishPushBatch(serverId, uids, env, batchSize);

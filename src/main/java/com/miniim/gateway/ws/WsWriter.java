@@ -24,6 +24,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.function.LongConsumer;
 
@@ -45,6 +46,38 @@ public class WsWriter {
     private final WsEncodeProperties encodeProps;
     @Qualifier("imWsEncodeExecutor")
     private final Executor encodeExecutor;
+
+    public static final class PreparedBytes implements AutoCloseable {
+        private final ByteBuf buf;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private PreparedBytes(ByteBuf buf) {
+            this.buf = Objects.requireNonNull(buf, "buf");
+        }
+
+        ByteBuf retainedDuplicate() {
+            return buf.retainedDuplicate();
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                try {
+                    buf.release();
+                } catch (Exception ignore) {
+                }
+            }
+        }
+    }
+
+    public PreparedBytes prepareBytes(WsEnvelope env) {
+        try {
+            byte[] bytes = objectMapper.writeValueAsBytes(env);
+            return new PreparedBytes(Unpooled.wrappedBuffer(bytes));
+        } catch (Exception e) {
+            throw new IllegalStateException("ws prepare bytes failed", e);
+        }
+    }
 
     public ChannelFuture write(ChannelHandlerContext ctx, WsEnvelope env) {
         if (ctx == null) {
@@ -102,6 +135,56 @@ public class WsWriter {
                 promise.setFailure(e);
             }
         });
+        return promise;
+    }
+
+    public ChannelFuture writePreparedBytes(Channel ch, WsEnvelope envMeta, PreparedBytes prepared) {
+        if (ch == null) {
+            throw new IllegalArgumentException("channel is null");
+        }
+        if (prepared == null) {
+            throw new IllegalArgumentException("prepared is null");
+        }
+        ChannelFuture fastFail = failFastIfUnwritable(ch);
+        if (fastFail != null) {
+            return fastFail;
+        }
+
+        if (backpressureProps != null
+                && backpressureProps.enabledEffective()
+                && backpressureProps.dropWhenUnwritableEffective()
+                && !ch.isWritable()) {
+            return ch.newFailedFuture(new IllegalStateException("ws backpressure: channel not writable"));
+        }
+
+        ByteBuf dup = prepared.retainedDuplicate();
+        if (ch.eventLoop().inEventLoop()) {
+            try {
+                return ch.writeAndFlush(new TextWebSocketFrame(dup));
+            } catch (Exception e) {
+                try {
+                    dup.release();
+                } catch (Exception ignore) {
+                }
+                return ch.newFailedFuture(e);
+            }
+        }
+        ChannelPromise promise = ch.newPromise();
+        try {
+            ch.eventLoop().execute(() -> ch.writeAndFlush(new TextWebSocketFrame(dup)).addListener(f -> {
+                if (f.isSuccess()) {
+                    promise.setSuccess();
+                } else {
+                    promise.setFailure(f.cause());
+                }
+            }));
+        } catch (Exception e) {
+            try {
+                dup.release();
+            } catch (Exception ignore) {
+            }
+            promise.setFailure(e);
+        }
         return promise;
     }
 

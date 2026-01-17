@@ -25,6 +25,10 @@ public class WsPushService {
     private final com.miniim.gateway.config.WsBackpressureProperties backpressureProps;
     private final com.miniim.gateway.config.WsPerfTraceProperties perfTraceProps;
 
+    public WsWriter.PreparedBytes prepareBytes(WsEnvelope envelope) {
+        return wsWriter.prepareBytes(envelope);
+    }
+
     public void pushToUser(long userId, WsEnvelope envelope) {
         long startNs = System.nanoTime();
         boolean anyLocal = pushToUserLocalOnly(userId, envelope);
@@ -58,6 +62,18 @@ public class WsPushService {
         boolean pushed = false;
         for (Channel ch : channels) {
             pushed |= pushToChannel(ch, envelope);
+        }
+        return pushed;
+    }
+
+    public boolean pushToUserLocalOnly(long userId, WsEnvelope envelope, WsWriter.PreparedBytes prepared) {
+        List<Channel> channels = sessionRegistry.getChannels(userId);
+        if (channels == null || channels.isEmpty()) {
+            return false;
+        }
+        boolean pushed = false;
+        for (Channel ch : channels) {
+            pushed |= pushToChannel(ch, envelope, prepared);
         }
         return pushed;
     }
@@ -96,6 +112,35 @@ public class WsPushService {
             return false;
         }
         wsWriter.write(ch, envelope).addListener(f -> {
+            if (!f.isSuccess()) {
+                log.debug("push failed: {}", f.cause() == null ? "unknown" : f.cause().toString());
+            }
+        });
+        return true;
+    }
+
+    private boolean pushToChannel(Channel ch, WsEnvelope envelope, WsWriter.PreparedBytes prepared) {
+        if (ch == null || !ch.isActive()) {
+            return false;
+        }
+        if (backpressureProps != null
+                && backpressureProps.enabledEffective()
+                && backpressureProps.dropWhenUnwritableEffective()
+                && !ch.isWritable()) {
+            if (isCritical(envelope)) {
+                Long uid = ch.attr(SessionRegistry.ATTR_USER_ID).get();
+                String cid = ch.attr(SessionRegistry.ATTR_CONN_ID).get();
+                log.warn("ws backpressure: closing unwritable channel for critical push: type={}, uid={}, cid={}",
+                        envelope == null ? null : envelope.type, uid, cid);
+                try {
+                    ch.close();
+                } catch (Exception e) {
+                    log.debug("close channel failed: {}", e.toString());
+                }
+            }
+            return false;
+        }
+        wsWriter.writePreparedBytes(ch, envelope, prepared).addListener(f -> {
             if (!f.isSuccess()) {
                 log.debug("push failed: {}", f.cause() == null ? "unknown" : f.cause().toString());
             }
