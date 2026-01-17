@@ -23,7 +23,7 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
      */
     private static final Duration LOCAL_TTL_FALLBACK = Duration.ofDays(30);
 
-    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final long REDIS_FAIL_FAST_MS = 10_000;
     private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;

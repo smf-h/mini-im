@@ -30,7 +30,7 @@ public class WsRouteStore {
      *
      * <p>注意：这是“可用性优先”的折中——短时间内可能导致跨实例路由能力下降（本来 Redis 已不可用）。</p>
      */
-    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final long REDIS_FAIL_FAST_MS = 10_000;
     private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;

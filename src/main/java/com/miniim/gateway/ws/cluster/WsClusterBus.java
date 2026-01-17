@@ -25,7 +25,7 @@ public class WsClusterBus {
      *
      * <p>跨实例控制消息在 Redis 宕机时本就无法保证，这里只保证“尽快失败/不拖垮业务线程”。</p>
      */
-    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final long REDIS_FAIL_FAST_MS = 10_000;
     private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;

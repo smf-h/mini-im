@@ -19,7 +19,7 @@ public class SessionVersionStore {
      *
      * <p>此处采用 fail-open：Redis 不可用时只校验 JWT 自身。</p>
      */
-    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final long REDIS_FAIL_FAST_MS = 10_000;
     private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     private final StringRedisTemplate redis;

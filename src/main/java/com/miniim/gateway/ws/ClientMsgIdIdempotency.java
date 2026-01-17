@@ -28,7 +28,7 @@ public class ClientMsgIdIdempotency {
     /**
      * Redis 故障时做 fail-fast：幂等只是保护阀，Redis 不可用时直接回退为本机 best-effort。
      */
-    private static final long REDIS_FAIL_FAST_MS = 1000;
+    private static final long REDIS_FAIL_FAST_MS = 10_000;
     private static final AtomicLong REDIS_UNAVAILABLE_UNTIL_MS = new AtomicLong(0);
 
     @Getter
