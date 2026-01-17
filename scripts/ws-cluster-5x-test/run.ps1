@@ -308,6 +308,12 @@ if (-not $SkipInfraCheck) {
   }
 }
 
+if ($SkipRedisCheck.IsPresent -and -not $PSBoundParameters.ContainsKey("SkipSmoke")) {
+  # Cluster smoke test relies on cross-instance publish/subscribe; when Redis check is skipped
+  # (typically used by Redis-down tests), skip smoke by default to avoid false failures.
+  $SkipSmoke = [System.Management.Automation.SwitchParameter]::new($true)
+}
+
 if (-not $SkipBuild) {
   mvn -q -DskipTests package
   if ($LASTEXITCODE -ne 0) { throw "mvn package failed (exit=$LASTEXITCODE)" }
