@@ -12,6 +12,8 @@ param(
   [switch]$SkipBuild,
   [switch]$SkipInfraCheck,
   [switch]$SkipRedisCheck,
+  [switch]$SkipSmoke,
+  [switch]$SkipSingleE2e,
   [switch]$KeepProcesses,
   [switch]$SkipConnectLarge,
   [switch]$SkipGroup,
@@ -450,7 +452,10 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
 }
 
   # Smoke: pick first two instances (only when Instances >= 2)
-  if ($instList.Count -ge 2) {
+  if ($SkipSmoke.IsPresent) {
+    $results.smokeSkipped = $true
+    $results.smokeSkippedReason = "SkipSmoke"
+  } elseif ($instList.Count -ge 2) {
     try {
       $smokePath = Run-Step "smoke_cluster_2x" {
         & "scripts/ws-cluster-smoke-test/run.ps1" -WsUrlA $ws0 -WsUrlB ("ws://127.0.0.1:$($instList[1].WsPort)/ws") -HttpBaseA $http0 -HttpBaseB ("http://127.0.0.1:$($instList[1].HttpPort)") -Password $Password -TimeoutMs 20000 -GroupStrategyMode $GroupStrategyMode
@@ -491,7 +496,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
       }
     }
 
-    $canE2e = ($n % 2 -eq 0) -and (($n -le 5000) -or $EnableLargeE2e)
+    $canE2e = (-not $SkipSingleE2e.IsPresent) -and ($n % 2 -eq 0) -and (($n -le 5000) -or $EnableLargeE2e)
     if ($canE2e) {
       try {
         $repN = $Repeats
@@ -547,6 +552,9 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
       } catch {
         $level.singleE2eError = $_.Exception.Message
       }
+    } elseif ($SkipSingleE2e.IsPresent) {
+      $level.singleE2eSkipped = $true
+      $level.singleE2eSkippedReason = "SkipSingleE2e"
     }
 
     # ACK_STRESS 会强烈占用 DB/队列并影响后续 level 的 E2E；因此放到 levels 循环外单独跑（默认仅测 5000）。

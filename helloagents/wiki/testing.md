@@ -50,6 +50,7 @@
   - 口径对齐：默认 `LoadSendModel=spread`（均匀摊平发送）；如需验证“齐发微突发”的 worst-case，可指定 `-LoadSendModel burst`（见 `helloagents/wiki/test_run_20260116_ablation_sendmodel_vs_autotune.md:1`）
   - 口径对齐：可用 `-LoadDrainMs 5000`（或更大）在停止发送后保留连接一段时间，确保 `orTimeout(3s)` 触发的 `ERROR` 不会被“提前关连接”掩盖
   - 快速回归：可用 `-SkipGroup` 跳过群聊压测（只测 connect/ping/single_e2e），用于做实例数 sweep（例如 5~9）时节省时间
+  - Redis down 专测时可用：`-SkipSmoke/-SkipSingleE2e`（只测 connect/ping 或手动指定单实例功能测试）
   - Redis 覆盖（用于“Redis down/抖动”专测）：
     - `-RedisHost/-RedisPort/-RedisDatabase`：把网关实例指向指定 Redis
     - `-SkipRedisCheck`：跳过 Redis 端口连通性检查（例如把 `-RedisPort 1` 用作“模拟 Redis 不可用”）
