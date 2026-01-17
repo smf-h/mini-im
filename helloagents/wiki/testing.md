@@ -42,6 +42,7 @@
 用于：一键启动 5 个网关实例（共用同一 MySQL/Redis），并按分级（默认 `500/5000/50000`）执行 connect/ping/single_e2e + 群聊 push 压测，同时解析 `ws_perf` 分段耗时。
 
 - `powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-5x-test/run.ps1`
+  - ⚠️ 若你的 PowerShell Profile 启用了 conda auto activate，且出现 `UnicodeEncodeError: 'gbk' codec can't encode ...`，建议在**已打开的 PowerShell 会话**里用 `& "scripts/ws-cluster-5x-test/run.ps1" ...` 直接调用（避免启动子 powershell 进程时触发 conda hook）。
   - 默认不会跑 `500000`（单机高概率会把本机压测端先打挂）；如确实要尝试，可加 `-Run500k`（风险自担）
   - 默认会从 **User-level 环境变量** 补齐 `IM_MYSQL_PASSWORD`（避免“每次开新 PowerShell 进程变量丢失”）
   - 输出目录：`logs/ws-cluster-5x-test_YYYYMMDD_HHMMSS/`（内含每一步 JSON 与每个实例日志）
@@ -49,6 +50,9 @@
   - 口径对齐：默认 `LoadSendModel=spread`（均匀摊平发送）；如需验证“齐发微突发”的 worst-case，可指定 `-LoadSendModel burst`（见 `helloagents/wiki/test_run_20260116_ablation_sendmodel_vs_autotune.md:1`）
   - 口径对齐：可用 `-LoadDrainMs 5000`（或更大）在停止发送后保留连接一段时间，确保 `orTimeout(3s)` 触发的 `ERROR` 不会被“提前关连接”掩盖
   - 快速回归：可用 `-SkipGroup` 跳过群聊压测（只测 connect/ping/single_e2e），用于做实例数 sweep（例如 5~9）时节省时间
+  - Redis 覆盖（用于“Redis down/抖动”专测）：
+    - `-RedisHost/-RedisPort/-RedisDatabase`：把网关实例指向指定 Redis
+    - `-SkipRedisCheck`：跳过 Redis 端口连通性检查（例如把 `-RedisPort 1` 用作“模拟 Redis 不可用”）
 
 ### 群聊 push 压测（含乱序/重复统计）
 

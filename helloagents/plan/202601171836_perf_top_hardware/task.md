@@ -2,13 +2,15 @@
 
 ## 0. 前置与基线
 
-- [ ] 固化压测口径：open-loop + sendModel（spread/burst）+ drainMs + errorsByReason
-- [ ] 跑一轮基线：单聊（5000）、群聊（默认参数）、连接（50000）并记录 runDir
+- [√] 固化压测口径：open-loop + sendModel（spread/burst）+ drainMs + errorsByReason
+- [√] 跑一轮基线：单聊（5000）、群聊（默认参数）、连接（50000）并记录 runDir
+  > 备注: 代表性 runDir：`logs/ws-cluster-5x-test_20260117_183926/`（全链路基线）；群聊 A/B：`logs/ws-cluster-5x-test_20260117_202113/`、`logs/ws-cluster-5x-test_20260117_203402/`
 
 ## 1. 噪声与可比性修复
 
-- [ ] 修复单机多 JVM 下 MyBatis-Plus ASSIGN_ID 冲突导致的 DuplicateKey/internal_error（若仍存在）
-- [ ] 清理/隔离跨 run 的幂等污染与关机噪声（确保错误率可解释）
+- [√] 修复单机多 JVM 下 MyBatis-Plus ASSIGN_ID 冲突导致的 DuplicateKey/internal_error（若仍存在）
+- [√] 清理/隔离跨 run 的幂等污染与关机噪声（确保错误率可解释）
+  > 备注: 已引入 sendModel（spread/burst）与错误 reason 统计（群聊补齐半包拼接），并通过 `AutoUserBase` 规避跨 run 幂等污染。
 
 ## 2. 单聊链路优化
 
@@ -30,4 +32,3 @@
 - [ ] 对每个“突破性改动”做消融对照（runDir + 指标表）
 - [ ] 更新 Wiki：最终性能指标（延迟/吞吐/错误率/保存率）+ 关键改动归因
 - [ ] 更新 CHANGELOG + 提交代码（按提交拆分，便于回滚/对照）
-

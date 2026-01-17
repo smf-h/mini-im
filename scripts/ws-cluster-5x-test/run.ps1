@@ -11,6 +11,7 @@ param(
 
   [switch]$SkipBuild,
   [switch]$SkipInfraCheck,
+  [switch]$SkipRedisCheck,
   [switch]$KeepProcesses,
   [switch]$SkipConnectLarge,
   [switch]$SkipGroup,
@@ -93,6 +94,10 @@ param(
   [int]$GroupSenders = 20,
   [int]$GroupMsgIntervalMs = 50,
   [int]$GroupReceiverSamplePct = 30,
+
+  [string]$RedisHost = "127.0.0.1",
+  [int]$RedisPort = 6379,
+  [int]$RedisDatabase = 0,
 
   [string]$Password = "p",
 
@@ -294,7 +299,9 @@ function Pick-Port([int]$Preferred, $Reserved) {
 
 if (-not $SkipInfraCheck) {
   Assert-TcpOpen "127.0.0.1" 3306 "MySQL must be running"
-  Assert-TcpOpen "127.0.0.1" 6379 "Redis must be running"
+  if (-not $SkipRedisCheck) {
+    Assert-TcpOpen $RedisHost $RedisPort "Redis must be running (or use -SkipRedisCheck / override -RedisHost/-RedisPort)"
+  }
 }
 
 if (-not $SkipBuild) {
@@ -321,6 +328,9 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("-jar")
   [void]$argList.Add($JarPath)
   [void]$argList.Add("--server.port=$httpPort")
+  if ($RedisHost -and $RedisHost.Trim().Length -gt 0) { [void]$argList.Add("--spring.data.redis.host=$RedisHost") }
+  if ($RedisPort -gt 0) { [void]$argList.Add("--spring.data.redis.port=$RedisPort") }
+  if ($RedisDatabase -ge 0) { [void]$argList.Add("--spring.data.redis.database=$RedisDatabase") }
 
   # Make IdWorker (MyBatis-Plus ASSIGN_ID) deterministic per local instance to avoid Snowflake collisions across JVM processes.
   [void]$argList.Add("--im.id.datacenter-id=1")
@@ -408,6 +418,7 @@ try {
   $results = [ordered]@{
     ok = $true
     runDir = $runDir
+    redis = [ordered]@{ host = $RedisHost; port = $RedisPort; database = $RedisDatabase; skipCheck = $SkipRedisCheck.IsPresent }
     instances = ($instList | ForEach-Object { [ordered]@{ name=$_.Name; httpPort=$_.HttpPort; wsPort=$_.WsPort } })
     groupStrategyMode = $GroupStrategyMode
     levels = @()
