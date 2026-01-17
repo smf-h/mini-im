@@ -61,6 +61,8 @@ param(
   [int]$MaxInflightHard = 200,
   [long]$MaxValidE2eMs = 600000,
   [int]$LoadDrainMs = 1500,
+  [ValidateSet('spread','burst')]
+  [string]$LoadSendModel = "spread",
 
   [bool]$AckBatchEnabled = $true,
   [int]$AckBatchWindowMs = 1000,
@@ -316,6 +318,10 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add($JarPath)
   [void]$argList.Add("--server.port=$httpPort")
 
+  # Make IdWorker (MyBatis-Plus ASSIGN_ID) deterministic per local instance to avoid Snowflake collisions across JVM processes.
+  [void]$argList.Add("--im.id.datacenter-id=1")
+  [void]$argList.Add("--im.id.worker-id=$Index")
+
   if ($JdbcMaxPoolSize -gt 0) { [void]$argList.Add("--spring.datasource.hikari.maximum-pool-size=$JdbcMaxPoolSize") }
   if ($JdbcMinIdle -gt 0) { [void]$argList.Add("--spring.datasource.hikari.minimum-idle=$JdbcMinIdle") }
   if ($JdbcConnectionTimeoutMs -gt 0) { [void]$argList.Add("--spring.datasource.hikari.connection-timeout=$JdbcConnectionTimeoutMs") }
@@ -445,7 +451,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
 
     try {
       $connectPath = Run-Step ("connect_" + $n) {
-        & "scripts/ws-load-test/run.ps1" -Mode connect -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationConnectSeconds -WarmupMs $WarmupMs -UserBase $UserBase -DrainMs 0
+        & "scripts/ws-load-test/run.ps1" -Mode connect -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationConnectSeconds -WarmupMs $WarmupMs -UserBase $UserBase -DrainMs 0 -SendModel $LoadSendModel
       }
       $level.connect = $connectPath
     } catch {
@@ -455,7 +461,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
     if ($n -le 5000) {
       try {
         $pingPath = Run-Step ("ping_" + $n) {
-          & "scripts/ws-load-test/run.ps1" -Mode ping -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -PingIntervalMs $PingIntervalMs -UserBase $UserBase -DrainMs 0
+          & "scripts/ws-load-test/run.ps1" -Mode ping -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -PingIntervalMs $PingIntervalMs -UserBase $UserBase -DrainMs 0 -SendModel $LoadSendModel
         }
         $level.ping = $pingPath
       } catch {
@@ -478,7 +484,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
           $olSplat = @{}
           if ($OpenLoop) { $olSplat = @{ OpenLoop = $true; MaxInflightHard = $MaxInflightHard } }
           $ub = $UserBase + ($rep * 1000000)
-          & "scripts/ws-load-test/run.ps1" -Mode single_e2e -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $durN -WarmupMs $WarmupMs -MsgIntervalMs $MsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -DrainMs $LoadDrainMs @olSplat
+          & "scripts/ws-load-test/run.ps1" -Mode single_e2e -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $durN -WarmupMs $WarmupMs -MsgIntervalMs $MsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -DrainMs $LoadDrainMs -SendModel $LoadSendModel @olSplat
         } {
           param($items)
           $p50 = ($items | ForEach-Object { $_.singleChat.e2eMs.p50 } | Measure-Object -Average).Average
@@ -534,7 +540,7 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
         $olSplat = @{}
         if ($OpenLoop) { $olSplat = @{ OpenLoop = $true; MaxInflightHard = $AckStressMaxInflightHard } }
         $ub = $UserBase + (9000000 + $rep * 1000000)
-        & "scripts/ws-load-test/run.ps1" -Mode ack_stress -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $AckStressMsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -AckStressTypes $AckStressTypes -AckEveryN $AckEveryN -DrainMs $LoadDrainMs @olSplat
+        & "scripts/ws-load-test/run.ps1" -Mode ack_stress -WsUrls $wsUrls @rolePinnedSplat -Clients $n -DurationSeconds $DurationSmallSeconds -WarmupMs $WarmupMs -MsgIntervalMs $AckStressMsgIntervalMs -UserBase $ub -Inflight $Inflight -MaxValidE2eMs $MaxValidE2eMs -AckStressTypes $AckStressTypes -AckEveryN $AckEveryN -DrainMs $LoadDrainMs -SendModel $LoadSendModel @olSplat
       } {
         param($items)
         [ordered]@{

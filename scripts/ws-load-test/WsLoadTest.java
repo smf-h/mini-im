@@ -63,6 +63,8 @@ public class WsLoadTest {
         int maxInflightHard = 200;
         long maxValidE2eMs = 10 * 60_000L;
 
+        String sendModel = "spread"; // spread|burst
+
         String ackStressTypes = "delivered,read";
         int ackEveryN = 1;
         boolean sendAckReceive = false;
@@ -478,15 +480,25 @@ public class WsLoadTest {
         }
 
         if (args.mode == Mode.SINGLE_E2E || args.mode == Mode.ACK_STRESS) {
-            // Avoid micro-bursts: the old implementation sent from all senders in the same scheduler tick,
-            // which creates a 2500-msg burst every msgIntervalMs (e.g. every 3s) and inflates wsError/queueing.
-            // Spread each sender with a deterministic per-user offset in [0, msgIntervalMs).
             int interval = Math.max(1, args.msgIntervalMs);
-            for (ClientCtx c : clients) {
-                if (!c.sender) continue;
-                long mixed = mix64(c.userId);
-                long initDelay = Math.floorMod(Long.hashCode(mixed), interval);
-                scheduler.scheduleAtFixedRate(() -> trySendSingleChat(c, args, m), initDelay, interval, TimeUnit.MILLISECONDS);
+            boolean burst = "burst".equalsIgnoreCase(args.sendModel);
+            if (burst) {
+                // Baseline model: send from all senders in the same scheduler tick,
+                // which creates a micro-burst every msgIntervalMs (e.g. every 3s).
+                scheduler.scheduleAtFixedRate(() -> {
+                    for (ClientCtx c : clients) {
+                        if (!c.sender) continue;
+                        trySendSingleChat(c, args, m);
+                    }
+                }, 0, interval, TimeUnit.MILLISECONDS);
+            } else {
+                // Spread each sender with a deterministic per-user offset in [0, msgIntervalMs).
+                for (ClientCtx c : clients) {
+                    if (!c.sender) continue;
+                    long mixed = mix64(c.userId);
+                    long initDelay = Math.floorMod(Long.hashCode(mixed), interval);
+                    scheduler.scheduleAtFixedRate(() -> trySendSingleChat(c, args, m), initDelay, interval, TimeUnit.MILLISECONDS);
+                }
             }
         }
 
@@ -626,6 +638,7 @@ public class WsLoadTest {
         System.out.println("  \"userBase\": " + args.userBase + ",");
         System.out.println("  \"rolePinned\": " + args.rolePinned + ",");
         System.out.println("  \"msgIntervalMs\": " + args.msgIntervalMs + ",");
+        System.out.println("  \"sendModel\": \"" + escapeJson(args.sendModel) + "\",");
         System.out.println("  \"pingIntervalMs\": " + args.pingIntervalMs + ",");
         System.out.println("  \"reconnect\": " + args.reconnect + ",");
         System.out.println("  \"flapIntervalMs\": " + args.flapIntervalMs + ",");
@@ -742,6 +755,7 @@ public class WsLoadTest {
                 case "--openLoop" -> { a.openLoop = true; }
                 case "--maxInflightHard" -> { a.maxInflightHard = Integer.parseInt(v); i++; }
                 case "--maxValidE2eMs" -> { a.maxValidE2eMs = Long.parseLong(v); i++; }
+                case "--sendModel" -> { a.sendModel = v; i++; }
                 case "--ackStressTypes" -> { a.ackStressTypes = v; i++; }
                 case "--ackEveryN" -> { a.ackEveryN = Integer.parseInt(v); i++; }
                 case "--sendAckReceive" -> { a.sendAckReceive = true; }

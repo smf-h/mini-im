@@ -69,6 +69,8 @@
 - WS：新增可选“写回编码 offload”开关 `im.gateway.ws.encode.enabled`（默认关闭，避免未经调参的排队回归；启用需用 `ws-cluster-5x-test` 做回归验证）
 - 测试：`ws-load-test` 的 `rolePinned` 策略改为按 `userId mod N` 均衡分配 `wsUrls`（5 实例不再只打到 2 个实例，避免热点导致的误判）
 - 测试：`scripts/ws-cluster-5x-test/run.ps1` 修复多实例启动参数截断/端口探测不稳定；新增 Hikari 参数透传与默认 `AutoUserBase`（避免 Redis `clientMsgId` 幂等污染导致“ACK(saved) 但不投递”的假象）
+- 测试：`ws-load-test` 新增发送模型 `sendModel=spread|burst`（摊平发送 vs 齐发微突发），并在 `ws-cluster-5x-test` 透传为 `LoadSendModel`
+- 稳定性：单机多 JVM 多实例压测时为每实例初始化唯一 Snowflake workerId（`im.id.worker-id`），避免 MyBatis-Plus `ASSIGN_ID` 产生 `DuplicateKeyException` → `ERROR internal_error`
 - 性能/稳定性：`imDbExecutor` 采用 `AbortPolicy`，单聊入口捕获 `RejectedExecutionException` 并映射为 `ERROR server_busy`，避免过载时排队雪崩
 - 测试：Windows 下启动脚本优先使用 `JAVA_HOME\\bin\\java.exe`（避免 `Oracle\\Java\\javapath\\java.exe` shim 导致残留进程/内存采样错误）；`ws-backpressure-multi-test` 增加 `meta_*.json` 与 mem CSV pid 字段，便于复现与排查
 - 构建：修复个别源码文件 BOM 导致 `mvn package` 编译失败（Windows 默认编码下报 `\ufeff`）

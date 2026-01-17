@@ -30,6 +30,9 @@
   - 可选：`-SlowConsumerPct/-SlowConsumerDelayMs` 模拟慢消费者（延迟读取）
   - 可选：`-NoReadPct` 模拟“接收端不读”（用于触发服务端 `channel.isWritable()` 翻转）
   - 可选：`-BodyBytes` 控制消息体大小（建议 `4000`，贴近服务端 `MAX_BODY_LEN=4096`，用于更快触发背压）
+  - 可选：`-SendModel spread|burst` 控制“发送节奏”
+    - `spread`：把发送均匀摊到整个 `msgIntervalMs` 窗口内（更接近真实随机到达）
+    - `burst`：所有 sender 在同一 tick 发送（每 `msgIntervalMs` 产生一次“微突发”，用于 worst-case 验证排队/限流）
   - 可选：`-JavaExe/-JavacExe` 指定 JDK 路径（Windows 下避免 `java` 指向 `Oracle javapath` 造成不可控）
   - 输出说明：压测输出 JSON 会包含 `userBase/msgIntervalMs/bodyBytes/slowConsumerPct/noReadPct` 等关键参数快照，便于你复现同口径
   - 输出说明：`single_e2e` 会输出 `e2eMsFast/e2eMsSlow`（拆分普通接收端与慢接收端的延迟分位数），避免“汇总 P99 被慢端拖高”导致误判
@@ -43,6 +46,7 @@
   - 默认会从 **User-level 环境变量** 补齐 `IM_MYSQL_PASSWORD`（避免“每次开新 PowerShell 进程变量丢失”）
   - 输出目录：`logs/ws-cluster-5x-test_YYYYMMDD_HHMMSS/`（内含每一步 JSON 与每个实例日志）
   - 单机多实例建议保持 `AutoTuneLocalThreads=true`（默认开启）：会按实例数自动对齐 Netty worker 线程、DB executor、JDBC 连接池等，避免“实例数上去→线程数爆炸→DB 排队超时→ERROR internal_error”
+  - 口径对齐：默认 `LoadSendModel=spread`（均匀摊平发送）；如需验证“齐发微突发”的 worst-case，可指定 `-LoadSendModel burst`（见 `helloagents/wiki/test_run_20260116_ablation_sendmodel_vs_autotune.md:1`）
   - 口径对齐：可用 `-LoadDrainMs 5000`（或更大）在停止发送后保留连接一段时间，确保 `orTimeout(3s)` 触发的 `ERROR` 不会被“提前关连接”掩盖
   - 快速回归：可用 `-SkipGroup` 跳过群聊压测（只测 connect/ping/single_e2e），用于做实例数 sweep（例如 5~9）时节省时间
 
