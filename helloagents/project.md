@@ -13,6 +13,7 @@
 - 缓存/会话: Redis
 - 网关: Netty WebSocket（gateway 模块）
 - 认证: JWT（jjwt），Refresh Token（Redis/DB）
+- 前端: Vue 3 + TypeScript + Vite（目录: `frontend/`）
 
 ---
 
@@ -32,5 +33,8 @@
 ## 常用命令（本地）
 - 构建: mvn -DskipTests package
 - 运行: mvn spring-boot:run
+- 测试: mvn test
+- 前端开发: npm -C frontend run dev
+- 前端构建: npm -C frontend run build
 
-> 当前仓库未包含 src/test/java 单元测试目录；如新增测试，请同步在知识库补充测试约定。
+> 仓库已包含基础单元测试（见 `src/test/java`）；如新增测试，请同步在知识库补充测试约定（`helloagents/wiki/testing.md`）。

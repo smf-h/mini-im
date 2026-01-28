@@ -7,3 +7,4 @@
 - 返回体：`com.miniim.common.api.Result`
 - 错误码：`com.miniim.common.api.ApiCodes`
 - 全局异常处理：`com.miniim.common.web.GlobalExceptionHandler`
+- 限流（HTTP）：`com.miniim.common.ratelimit.*`（`@RateLimit` + AOP + Redis Lua，超限返回 429）

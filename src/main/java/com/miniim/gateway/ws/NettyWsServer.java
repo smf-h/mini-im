@@ -1,12 +1,9 @@
 package com.miniim.gateway.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.miniim.auth.service.JwtService;
-import com.miniim.domain.entity.ConversationEntity;
-import com.miniim.domain.service.ConversationService;
-import com.miniim.domain.service.MessageService;
-import com.miniim.domain.service.SingleChatService;
+import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.config.GatewayProperties;
+import com.miniim.gateway.config.WsBackpressureProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -16,16 +13,15 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
+import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolConfig;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -35,13 +31,18 @@ public class NettyWsServer implements SmartLifecycle {
 
     private final GatewayProperties props;
     private final ObjectMapper objectMapper;
-    private final JwtService jwtService;
+    private final SessionVersionStore sessionVersionStore;
     private final SessionRegistry sessionRegistry;
-    private final MessageService messageService;
-    private final ConversationService conversationService;
-    private  final SingleChatService singleChatService;
-    private final Executor imDbExecutor;
-    private final ClientMsgIdIdempotency clientMsgIdIdempotency;
+    private final WsWriter wsWriter;
+    private final WsAuthHandler wsAuthHandler;
+    private final WsPingHandler wsPingHandler;
+    private final WsCallHandler wsCallHandler;
+    private final WsAckHandler wsAckHandler;
+    private final WsFriendRequestHandler wsFriendRequestHandler;
+    private final WsSingleChatHandler wsSingleChatHandler;
+    private final WsGroupChatHandler wsGroupChatHandler;
+    private final WsMessageRevokeHandler wsMessageRevokeHandler;
+    private final WsBackpressureProperties backpressureProps;
 
     private EventLoopGroup boss;
     private EventLoopGroup worker;
@@ -50,22 +51,32 @@ public class NettyWsServer implements SmartLifecycle {
 
     public NettyWsServer(GatewayProperties props,
                          ObjectMapper objectMapper,
-                         JwtService jwtService,
+                         SessionVersionStore sessionVersionStore,
                          SessionRegistry sessionRegistry,
-                         MessageService messageService,
-                         ConversationService conversationService,
-                         SingleChatService singleChatService,
-                         @Qualifier("imDbExecutor") Executor imDbExecutor,
-                         ClientMsgIdIdempotency clientMsgIdIdempotency) {
+                         WsWriter wsWriter,
+                         WsAuthHandler wsAuthHandler,
+                         WsPingHandler wsPingHandler,
+                         WsCallHandler wsCallHandler,
+                         WsAckHandler wsAckHandler,
+                         WsFriendRequestHandler wsFriendRequestHandler,
+                         WsSingleChatHandler wsSingleChatHandler,
+                         WsGroupChatHandler wsGroupChatHandler,
+                         WsMessageRevokeHandler wsMessageRevokeHandler,
+                         WsBackpressureProperties backpressureProps) {
         this.props = props;
         this.objectMapper = objectMapper;
-        this.jwtService = jwtService;
+        this.sessionVersionStore = sessionVersionStore;
         this.sessionRegistry = sessionRegistry;
-        this.messageService = messageService;
-        this.conversationService = conversationService;
-        this.singleChatService = singleChatService;
-        this.imDbExecutor = imDbExecutor;
-        this.clientMsgIdIdempotency = clientMsgIdIdempotency;
+        this.wsWriter = wsWriter;
+        this.wsAuthHandler = wsAuthHandler;
+        this.wsPingHandler = wsPingHandler;
+        this.wsCallHandler = wsCallHandler;
+        this.wsAckHandler = wsAckHandler;
+        this.wsFriendRequestHandler = wsFriendRequestHandler;
+        this.wsSingleChatHandler = wsSingleChatHandler;
+        this.wsGroupChatHandler = wsGroupChatHandler;
+        this.wsMessageRevokeHandler = wsMessageRevokeHandler;
+        this.backpressureProps = backpressureProps;
     }
 
     @Override
@@ -79,14 +90,21 @@ public class NettyWsServer implements SmartLifecycle {
         // boss: 负责 accept 新连接；worker: 负责处理已建立连接的读写事件
         // 这里是最常见的 Netty 线程模型。
 
-        boss = new NioEventLoopGroup(1);
-        worker = new NioEventLoopGroup();
+        boss = new NioEventLoopGroup(props.bossThreadsEffective());
+        Integer workerThreads = props.workerThreadsEffectiveOrNull();
+        worker = (workerThreads == null) ? new NioEventLoopGroup() : new NioEventLoopGroup(workerThreads);
 
         ServerBootstrap b = new ServerBootstrap();
         b.group(boss, worker)
                 .channel(NioServerSocketChannel.class)
-                .childOption(ChannelOption.SO_KEEPALIVE, true)
-                .childHandler(new ChannelInitializer<SocketChannel>() {
+                .childOption(ChannelOption.SO_KEEPALIVE, true);
+        if (backpressureProps == null || backpressureProps.enabledEffective()) {
+            b.childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(
+                    backpressureProps == null ? 256 * 1024 : backpressureProps.lowWaterMarkBytesEffective(),
+                    backpressureProps == null ? 512 * 1024 : backpressureProps.highWaterMarkBytesEffective()
+            ));
+        }
+        b.childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
                         ChannelPipeline p = ch.pipeline();
@@ -96,23 +114,45 @@ public class NettyWsServer implements SmartLifecycle {
 
                         // 2) 聚合 HTTP 消息：把多个 HttpContent 聚合成 FullHttpRequest，便于握手处理
                         p.addLast(new HttpObjectAggregator(65536));
-                        p.addLast(new LoggingHandler(LogLevel.INFO));
+//                        p.addLast(new LoggingHandler(LogLevel.INFO));
 
-                        // 3) 空闲检测：60 秒内“没有读到任何数据”就触发 READER_IDLE
-                        //    用途：清理死连接（比如手机切后台/断网，但 TCP 迟迟不触发 close）
-                        p.addLast(new IdleStateHandler(0, 300, 0));
+                        // 3) 空闲检测：
+                        //    - readerIdle：一段时间内没有读到任何数据（包含 WS 层 pong），用于清理“僵尸连接”
+                        //    - writerIdle：一段时间内没有写任何数据，用于触发心跳与在线 TTL 续期
+                        p.addLast(new IdleStateHandler(90, 60, 0));
+                        p.addLast(new WsBackpressureHandler(backpressureProps));
 
-                        // 4) 握手鉴权：在 HTTP Upgrade 阶段校验 accessToken，并把 userId/exp 绑定到 channel
-                        p.addLast(new WsHandshakeAuthHandler(props.path(), jwtService, sessionRegistry));
-
-                        // 5) WebSocket 协议处理：
+                        // 4) WebSocket 协议处理：
                         //    - 处理握手（upgrade）
                         //    - 自动处理 Ping/Pong 帧（注意：这是 WebSocket 协议层的 ping/pong）
                         //    - 把握手后的 TextWebSocketFrame 等上层帧往后传
-                        p.addLast(new WebSocketServerProtocolHandler(props.path(), null, true));
+                        WebSocketServerProtocolConfig wsConfig = WebSocketServerProtocolConfig.newBuilder()
+                                .websocketPath(props.path())
+                                .checkStartsWith(true)
+                                .allowExtensions(true)
+                                // 限制单个 WS 文本帧最大 payload：避免超大 JSON 帧导致内存/GC 抖动与解析开销放大。
+                                .maxFramePayloadLength(65536)
+                                .build();
+                        p.addLast(new WebSocketServerProtocolHandler(wsConfig));
+
+                        // 5) AUTH-first：握手完成后必须在窗口内完成 AUTH，否则先回 ERROR 再断连。
+                        p.addLast(new WsAuthTimeoutHandler(sessionRegistry, wsWriter, 3000));
 
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
-                        p.addLast(new WsFrameHandler(objectMapper, jwtService, sessionRegistry, messageService, conversationService, singleChatService, imDbExecutor, clientMsgIdIdempotency));
+                        p.addLast(new WsFrameHandler(
+                                objectMapper,
+                                sessionRegistry,
+                                wsWriter,
+                                wsAuthHandler,
+                                wsPingHandler,
+                                sessionVersionStore,
+                                wsCallHandler,
+                                wsAckHandler,
+                                wsFriendRequestHandler,
+                                wsSingleChatHandler,
+                                wsGroupChatHandler,
+                                wsMessageRevokeHandler
+                        ));
                     }
                 }
                 );
@@ -166,3 +206,4 @@ public class NettyWsServer implements SmartLifecycle {
         callback.run();
     }
 }
+

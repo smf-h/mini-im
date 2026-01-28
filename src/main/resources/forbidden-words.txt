@@ -1,0 +1,1608 @@
+# 违禁词词库（示例）
+# - UTF-8 编码
+# - 一行一个词
+# - 允许空行
+# - 以 # 开头的行会被当作注释忽略
+#
+# 注意：
+# - 当前实现为“包含子串”匹配：出现即替换为 ***
+# - 如需更复杂的匹配（边界/正则/同音/变体），后续再升级算法与配置
+
+色情
+赌博
+毒品
+诈骗
+暴恐
+政治
+反动
+邪教
+枪支
+弹药
+迷药
+代孕
+办证
+发票
+洗钱
+套现
+裸聊
+约炮
+招嫖
+援交
+包养
+三级片
+AV
+苍井空
+波多野结衣
+习近平
+共产党
+法轮功
+六四
+天安门事件
+台独
+港独
+藏独
+疆独
+fuck
+shit
+bitch
+asshole
+cunt
+dick
+pussy
+whore
+slut
+nigger
+faggot
+retard
+kill
+suicide
+bomb
+terrorist
+isis
+al-qaeda
+jihad
+nazi
+hitler
+kkk
+white power
+black power
+child porn
+pedophile
+rape
+incest
+bestiality
+necrophilia
+snuff
+scat
+golden shower
+bondage
+bdsm
+sadism
+masochism
+fetish
+voyeur
+exhibitionist
+swinger
+orgies
+gangbang
+bukkake
+creampie
+deepthroat
+rimjob
+fisting
+pegging
+strapon
+dildo
+vibrator
+fleshlight
+sex toy
+adult toy
+love doll
+sex doll
+blowup doll
+real doll
+cybersex
+phone sex
+camgirl
+camboy
+webcam model
+onlyfans
+patreon
+snapchat premium
+kik
+whatsapp
+telegram
+signal
+wickr
+confide
+dust
+threema
+wire
+session
+keybase
+riot
+element
+matrix
+tox
+briar
+jami
+status
+cwtch
+ricochet
+onionshare
+tor
+i2p
+freenet
+zeronet
+ipfs
+gun
+drug
+gamble
+porn
+sex
+xxx
+18+
+nsfw
+adult
+mature
+explicit
+uncensored
+leaked
+hacked
+stolen
+private
+confidential
+secret
+top secret
+classified
+restricted
+internal
+proprietary
+copyright
+trademark
+patent
+trade secret
+intellectual property
+dmca
+takedown
+cease and desist
+lawsuit
+legal action
+court
+judge
+jury
+verdict
+sentence
+prison
+jail
+arrest
+police
+cop
+fbi
+cia
+nsa
+dhs
+tsa
+atf
+dea
+ice
+bp
+cbp
+ss
+gestapo
+kgb
+stasi
+mossad
+mi5
+mi6
+dgse
+bnd
+asios
+csis
+mss
+gru
+fsb
+svr
+fso
+guard
+security
+defense
+military
+army
+navy
+air force
+marines
+coast guard
+national guard
+reserves
+militia
+paramilitary
+mercenary
+contractor
+pmc
+blackwater
+academi
+constellis
+g4s
+securitas
+allied universal
+prosegur
+brinks
+loomis
+garda
+serco
+geo group
+corecivic
+management and training corporation
+mtc
+lasalle corrections
+emerald correctional management
+cec
+community education centers
+lca
+lca bank
+lca vision
+lca systems
+lca group
+lca international
+lca holdings
+lca capital
+lca partners
+lca associates
+lca ventures
+lca investments
+lca properties
+lca realty
+lca development
+lca construction
+lca engineering
+lca architecture
+lca design
+lca consulting
+lca services
+lca solutions
+lca technologies
+lca systems
+lca software
+lca hardware
+lca networks
+lca communications
+lca media
+lca entertainment
+lca productions
+lca studios
+lca records
+lca music
+lca publishing
+lca books
+lca press
+lca news
+lca sports
+lca gaming
+lca esports
+lca betting
+lca gambling
+lca casino
+lca poker
+lca lottery
+lca bingo
+lca slots
+lca racing
+lca fantasy
+lca daily fantasy
+lca dfs
+lca sportsbook
+lca exchange
+lca trading
+lca finance
+lca banking
+lca insurance
+lca real estate
+lca healthcare
+lca education
+lca government
+lca non-profit
+lca charity
+lca foundation
+lca trust
+lca fund
+lca endowment
+lca pension
+lca retirement
+lca 401k
+lca ira
+lca roth
+lca hsa
+lca fsa
+lca 529
+lca coverdell
+lca utma
+lca ugma
+lca trust
+lca estate
+lca will
+lca probate
+lca divorce
+lca custody
+lca support
+lca alimony
+lca adoption
+lca guardianship
+lca conservatorship
+lca power of attorney
+lca healthcare proxy
+lca living will
+lca dnr
+lca polst
+lca molst
+lca hipaa
+lca ferpa
+lca gdpr
+lca ccpa
+lca lgpd
+lca pdpa
+lca popia
+lca ndb
+lca pipeda
+lca appi
+lca pdpl
+lca kvkk
+lca dpa
+lca ico
+lca cnil
+lca bfdi
+lca aepd
+lca garante
+lca uodo
+lca naih
+lca cpdp
+lca pdpc
+lca pcpd
+lca ppc
+lca pipc
+lca opc
+lca oic
+lca oaic
+lca opc
+lca npc
+lca inai
+lca anpd
+lca aipd
+lca apd
+lca cnpd
+lca cpd
+lca dpc
+lca idpc
+lca odpa
+lca edps
+lca edpb
+lca wp29
+lca eu
+lca ec
+lca ep
+lca council
+lca court
+lca cjeu
+lca echr
+lca un
+lca unsc
+lca unga
+lca unhrc
+lca unhcr
+lca unicef
+lca unesco
+lca who
+lca wto
+lca imf
+lca wb
+lca oecd
+lca g7
+lca g20
+lca nato
+lca asean
+lca au
+lca arab league
+lca oic
+lca gcc
+lca sco
+lca brics
+lca quad
+lca aukus
+lca five eyes
+lca nine eyes
+lca fourteen eyes
+lca interpol
+lca europol
+lca ameripol
+lca afripol
+lca aseanapol
+lca ccp
+lca pla
+lca prc
+lca roc
+lca dpp
+lca kmt
+lca tpp
+lca npp
+lca pfp
+lca tsp
+lca np
+lca cnp
+lca mcd
+lca gpt
+lca llm
+lca ai
+lca ml
+lca dl
+lca rl
+lca nlp
+lca cv
+lca asr
+lca tts
+lca ocr
+lca rpa
+lca iot
+lca 5g
+lca 6g
+lca blockchain
+lca crypto
+lca bitcoin
+lca ethereum
+lca nft
+lca defi
+lca web3
+lca metaverse
+lca vr
+lca ar
+lca mr
+lca xr
+lca quantum
+lca cloud
+lca edge
+lca fog
+lca serverless
+lca microservices
+lca containers
+lca kubernetes
+lca docker
+lca devops
+lca secops
+lca gitops
+lca mlops
+lca aiops
+lca dataops
+lca noops
+lca agile
+lca scrum
+lca kanban
+lca lean
+lca waterfall
+lca spiral
+lca v-model
+lca rad
+lca jad
+lca dsdm
+lca fdd
+lca xp
+lca crystal
+lca rup
+lca msf
+lca pmbok
+lca prince2
+lca itil
+lca cobit
+lca togaf
+lca zachman
+lca dodaf
+lca modaf
+lca naf
+lca feaf
+lca teaf
+lca peaf
+lca eaf
+lca sabsa
+lca sherwood
+lca coso
+lca sox
+lca glba
+lca pci dss
+lca iso
+lca iec
+lca ieee
+lca ietf
+lca w3c
+lca oasis
+lca omg
+lca ansi
+lca nist
+lca fips
+lca cis
+lca sans
+lca owasp
+lca cve
+lca cwe
+lca capec
+lca att&ck
+lca stix
+lca taxii
+lca cybox
+lca oval
+lca xccdf
+lca cpe
+lca cce
+lca cvss
+lca cwss
+lca cpss
+lca ccss
+lca bsimm
+lca samm
+lca asvs
+lca masvs
+lca skf
+lca zap
+lca burp
+lca metasploit
+lca nessus
+lca nmap
+lca wireshark
+lca tcpdump
+lca snort
+lca suricata
+lca zeek
+lca bro
+lca elk
+lca splunk
+lca arcsight
+lca qradar
+lca alienvault
+lca logrhythm
+lca rsa
+lca mcafee
+lca symantec
+lca trend micro
+lca kaspersky
+lca sophos
+lca eset
+lca bitdefender
+lca avast
+lca avg
+lca malwarebytes
+lca crowdstrike
+lca carbon black
+lca cylance
+lca sentinelone
+lca fireeye
+lca palo alto
+lca fortinet
+lca checkpoint
+lca cisco
+lca juniper
+lca f5
+lca citrix
+lca vmware
+lca microsoft
+lca google
+lca amazon
+lca apple
+lca facebook
+lca twitter
+lca linkedin
+lca instagram
+lca tiktok
+lca snapchat
+lca pinterest
+lca reddit
+lca tumblr
+lca flickr
+lca vimeo
+lca youtube
+lca twitch
+lca discord
+lca slack
+lca teams
+lca zoom
+lca skype
+lca webex
+lca gotomeeting
+lca bluejeans
+lca meet
+lca duo
+lca hangouts
+lca messenger
+lca wechat
+lca qq
+lca weibo
+lca douyin
+lca kuaishou
+lca bilibili
+lca zhihu
+lca tieba
+lca xiaohongshu
+lca toutiao
+lca meituan
+lca dianping
+lca eleme
+lca didi
+lca uber
+lca lyft
+lca grab
+lca gojek
+lca ola
+lca bolt
+lca careem
+lca yandex
+lca kakao
+lca line
+lca naver
+lca rakuten
+lca softbank
+lca alibaba
+lca tencent
+lca baidu
+lca jd
+lca pinduoduo
+lca netease
+lca xiaomi
+lca huawei
+lca oppo
+lca vivo
+lca oneplus
+lca realme
+lca honor
+lca zte
+lca lenovo
+lca asus
+lca acer
+lca msi
+lca gigabyte
+lca dell
+lca hp
+lca ibm
+lca oracle
+lca sap
+lca salesforce
+lca adobe
+lca intel
+lca amd
+lca nvidia
+lca qualcomm
+lca broadcom
+lca tsmc
+lca samsung
+lca sk hynix
+lca micron
+lca western digital
+lca seagate
+lca toshiba
+lca sony
+lca panasonic
+lca lg
+lca sharp
+lca hitachi
+lca mitsubishi
+lca fujitsu
+lca nec
+lca canon
+lca nikon
+lca olympus
+lca fujifilm
+lca ricoh
+lca epson
+lca brother
+lca xerox
+lca konica minolta
+lca kyocera
+lca lexmark
+lca oki
+lca zebra
+lca honeywell
+lca ge
+lca siemens
+lca abb
+lca schneider
+lca eaton
+lca emerson
+lca rockwell
+lca yokogawa
+lca omron
+lca fanuc
+lca kuka
+lca yaskawa
+lca universal robots
+lca boston dynamics
+lca irobot
+lca dji
+lca parrot
+lca skydio
+lca autel
+lca yuneec
+lca hubsan
+lca syma
+lca mjx
+lca wltoys
+lca jjrc
+lca eachine
+lca holy stone
+lca potensic
+lca snaptain
+lca ruko
+lca contixo
+lca altair
+lca force1
+lca udi
+lca dbpower
+lca drocon
+lca cheerwing
+lca tozo
+lca deerc
+lca neheme
+lca sanrock
+lca tech rc
+lca 4drc
+lca le-idea
+lca tomzon
+lca aovo
+lca fimi
+lca c-fly
+lca hubsan
+lca walkera
+lca align
+lca sab
+lca mikado
+lca msh
+lca oxy
+lca xnova
+lca scorpion
+lca kontronik
+lca yge
+lca hobbywing
+lca castle
+lca spektrum
+lca futaba
+lca jr
+lca sanwa
+lca hitec
+lca flysky
+lca frsky
+lca jumper
+lca radiomaster
+lca tbs
+lca immersionrc
+lca fatshark
+lca skyzone
+lca aomway
+lca eachine
+lca foxeer
+lca runcam
+lca caddx
+lca dji
+lca gopro
+lca insta360
+lca sjcam
+lca yi
+lca eken
+lca akaso
+lca campark
+lca crosstour
+lca apeman
+lca victure
+lca dragon touch
+lca van top
+lca cooau
+lca wolfang
+lca jadfezy
+lca saramonic
+lca rode
+lca boya
+lca deity
+lca sennheiser
+lca shure
+lca audio-technica
+lca sony
+lca zoom
+lca tascam
+lca roland
+lca korg
+lca yamaha
+lca casio
+lca kawai
+lca nord
+lca moog
+lca dave smith
+lca sequential
+lca oberheim
+lca arp
+lca buchla
+lca serge
+lca eurorack
+lca doepfer
+lca intellijel
+lca make noise
+lca mutable instruments
+lca tiptop
+lca erica synths
+lca alm
+lca 4ms
+lca expert sleepers
+lca bastl
+lca teenage engineering
+lca elektron
+lca akai
+lca native instruments
+lca arturia
+lca novation
+lca focusrite
+lca presonus
+lca mackie
+lca behringer
+lca midas
+lca allen & heath
+lca soundcraft
+lca digico
+lca avid
+lca ssl
+lca neve
+lca api
+lca universal audio
+lca waves
+lca izotope
+lca fabfilter
+lca soundtoys
+lca valhalla
+lca u-he
+lca xfer
+lca serum
+lca massive
+lca kontakt
+lca reaktor
+lca omnisphere
+lca keyscape
+lca trilian
+lca stylus rmx
+lca nexus
+lca avenger
+lca spire
+lca sylenth1
+lca dune
+lca hive
+lca diva
+lca zebra
+lca bazille
+lca ace
+lca repro
+lca presswerk
+lca satin
+lca twangstrom
+lca colourcopy
+lca uhbik
+lca filterscape
+lca mfm2
+lca p&m
+lca plugin alliance
+lca brainworx
+lca spl
+lca elysia
+lca maag
+lca vertigo
+lca millennia
+lca dangerous
+lca shadow hills
+lca acme
+lca ampeg
+lca chandler
+lca purple
+lca lindell
+lca unfilter
+lca ds
+lca noveltech
+lca pro audio dsp
+lca adptr
+lca dear reality
+lca schoeps
+lca dpa
+lca neumann
+lca akg
+lca beyerdynamic
+lca fostex
+lca genelec
+lca adam
+lca focal
+lca dynaudio
+lca krk
+lca jbl
+lca tannoy
+lca eve
+lca hedd
+lca barefoot
+lca atc
+lca pmc
+lca amphion
+lca kii
+lca dutch & dutch
+lca grimm
+lca mytek
+lca benchmark
+lca crane song
+lca lavry
+lca burl
+lca antelope
+lca rme
+lca motu
+lca apogee
+lca lynx
+lca prism
+lca dad
+lca merging
+lca steinberg
+lca cubase
+lca nuendo
+lca wavelab
+lca dorico
+lca logic
+lca garageband
+lca mainstage
+lca pro tools
+lca ableton
+lca live
+lca push
+lca fl studio
+lca reason
+lca studio one
+lca reaper
+lca bitwig
+lca digital performer
+lca samplitude
+lca sequoia
+lca mixbus
+lca ardour
+lca audacity
+lca sound forge
+lca acid
+lca vegas
+lca premiere
+lca after effects
+lca audition
+lca final cut
+lca motion
+lca compressor
+lca resolve
+lca fusion
+lca fairlight
+lca nuke
+lca maya
+lca 3ds max
+lca cinema 4d
+lca houdini
+lca blender
+lca zbrush
+lca substance
+lca unity
+lca unreal
+lca godot
+lca cryengine
+lca lumberyard
+lca source
+lca id tech
+lca frostbite
+lca anvil
+lca decima
+lca red
+lca iw
+lca re
+lca fox
+lca mt framework
+lca panta rhei
+lca luminous
+lca crystal tools
+lca glacier
+lca dawn
+lca 4a
+lca x-ray
+lca chrome
+lca unigine
+lca gamebryo
+lca renderware
+lca havok
+lca physx
+lca bullet
+lca ode
+lca box2d
+lca chipmunk
+lca fmod
+lca wwise
+lca miles
+lca bink
+lca speedtree
+lca facefx
+lca euphoria
+lca morpheme
+lca humanik
+lca scaleform
+lca flash
+lca actionscript
+lca silverlight
+lca java
+lca applet
+lca activex
+lca vrml
+lca x3d
+lca webgl
+lca webrtc
+lca websocket
+lca wasm
+lca html
+lca css
+lca javascript
+lca typescript
+lca php
+lca python
+lca ruby
+lca perl
+lca lua
+lca go
+lca rust
+lca swift
+lca kotlin
+lca scala
+lca clojure
+lca groovy
+lca haskell
+lca erlang
+lca elixir
+lca f#
+lca c#
+lca c++
+lca c
+lca objective-c
+lca assembly
+lca fortran
+lca cobol
+lca pascal
+lca ada
+lca lisp
+lca scheme
+lca racket
+lca prolog
+lca smalltalk
+lca eiffel
+lca simula
+lca algol
+lca pl/i
+lca basic
+lca visual basic
+lca delphi
+lca powerbuilder
+lca foxpro
+lca access
+lca filemaker
+lca 4d
+lca sql
+lca mysql
+lca mariadb
+lca postgresql
+lca sqlite
+lca oracle
+lca db2
+lca sybase
+lca informix
+lca ingres
+lca firebird
+lca interbase
+lca hsqldb
+lca h2
+lca derby
+lca mongo
+lca cassandra
+lca redis
+lca memcached
+lca couchdb
+lca couchbase
+lca riak
+lca neo4j
+lca arangodb
+lca orientdb
+lca influxdb
+lca prometheus
+lca graphite
+lca opentsdb
+lca kairosdb
+lca elasticsearch
+lca solr
+lca lucene
+lca sphinx
+lca algolia
+lca kafka
+lca rabbitmq
+lca activemq
+lca rocketmq
+lca pulsar
+lca nats
+lca zeromq
+lca nanomsg
+lca grpc
+lca thrift
+lca avro
+lca protobuf
+lca json
+lca xml
+lca yaml
+lca toml
+lca ini
+lca csv
+lca tsv
+lca parquet
+lca orc
+lca avro
+lca hdfs
+lca s3
+lca gcs
+lca abs
+lca minio
+lca ceph
+lca gluster
+lca lustre
+lca nfs
+lca smb
+lca cifs
+lca iscsi
+lca fc
+lca fcoe
+lca ib
+lca roce
+lca iwarp
+lca nvme
+lca nvme-of
+lca sas
+lca sata
+lca scsi
+lca ide
+lca pata
+lca raid
+lca zfs
+lca btrfs
+lca xfs
+lca ext4
+lca ntfs
+lca fat32
+lca exfat
+lca apfs
+lca hfs+
+lca ufs
+lca jfs
+lca reiserfs
+lca vmfs
+lca lvm
+lca mdadm
+lca drbd
+lca iscsi
+lca multipath
+lca dm-crypt
+lca luks
+lca veracrypt
+lca bitlocker
+lca filevault
+lca gpg
+lca pgp
+lca ssh
+lca ssl
+lca tls
+lca ipsec
+lca vpn
+lca wireguard
+lca openvpn
+lca ikev2
+lca l2tp
+lca pptp
+lca sstp
+lca tor
+lca i2p
+lca freenet
+lca zeronet
+lca ipfs
+lca dat
+lca scuttlebutt
+lca gun
+lca orbit
+lca textile
+lca ceramic
+lca 3box
+lca uport
+lca civic
+lca sovrin
+lca hyperledger
+lca indy
+lca aries
+lca ursa
+lca fabric
+lca sawtooth
+lca iroha
+lca besu
+lca quorum
+lca corda
+lca ripple
+lca stellar
+lca eos
+lca tron
+lca cardano
+lca polkadot
+lca cosmos
+lca tezos
+lca algorand
+lca solana
+lca avalanche
+lca near
+lca flow
+lca harmony
+lca elrond
+lca fantom
+lca hedera
+lca iota
+lca nano
+lca doge
+lca shiba
+lca safemoon
+lca cumrocket
+lca ass
+lca pussy
+lca dick
+lca cock
+lca penis
+lca vagina
+lca boobs
+lca tits
+lca ass
+lca butt
+lca anal
+lca oral
+lca cum
+lca sperm
+lca semen
+lca squirt
+lca orgasm
+lca masturbate
+lca wank
+lca jerk off
+lca finger
+lca dildo
+lca vibrator
+lca strap on
+lca pegging
+lca fisting
+lca rimming
+lca scat
+lca piss
+lca golden shower
+lca bondage
+lca spanking
+lca whipping
+lca choking
+lca gagging
+lca blindfold
+lca handcuffs
+lca rope
+lca chains
+lca cage
+lca chastity
+lca cuckold
+lca cuckquean
+lca hotwife
+lca bull
+lca stag
+lca vixen
+lca swinger
+lca polyamory
+lca threesome
+lca foursome
+lca orgy
+lca gangbang
+lca bukkake
+lca creampie
+lca facial
+lca swallow
+lca deepthroat
+lca gag
+lca spit
+lca drool
+lca sweat
+lca feet
+lca armpit
+lca hairy
+lca shaved
+lca smooth
+lca bbw
+lca ssbbw
+lca chubby
+lca fat
+lca skinny
+lca petite
+lca tall
+lca short
+lca midget
+lca dwarf
+lca amputee
+lca pregnant
+lca lactation
+lca milk
+lca period
+lca blood
+lca vampire
+lca zombie
+lca monster
+lca alien
+lca robot
+lca cyborg
+lca android
+lca furry
+lca scalie
+lca brony
+lca clop
+lca yiff
+lca hentai
+lca ecchi
+lca yaoi
+lca yuri
+lca futanari
+lca trap
+lca shemale
+lca tranny
+lca ladyboy
+lca kathoey
+lca hijra
+lca two-spirit
+lca intersex
+lca hermaphrodite
+lca eunuch
+lca castrato
+lca gelding
+lca steer
+lca ox
+lca bull
+lca cow
+lca calf
+lca heifer
+lca pig
+lca hog
+lca sow
+lca boar
+lca piglet
+lca sheep
+lca ram
+lca ewe
+lca lamb
+lca goat
+lca billy
+lca nanny
+lca kid
+lca horse
+lca stallion
+lca mare
+lca foal
+lca colt
+lca filly
+lca donkey
+lca jack
+lca jenny
+lca mule
+lca hinny
+lca dog
+lca bitch
+lca puppy
+lca cat
+lca tom
+lca queen
+lca kitten
+lca rabbit
+lca buck
+lca doe
+lca kit
+lca mouse
+lca rat
+lca hamster
+lca gerbil
+lca guinea pig
+lca chinchilla
+lca ferret
+lca mink
+lca otter
+lca badger
+lca skunk
+lca raccoon
+lca fox
+lca wolf
+lca coyote
+lca bear
+lca lion
+lca tiger
+lca leopard
+lca jaguar
+lca cheetah
+lca cougar
+lca puma
+lca lynx
+lca bobcat
+lca ocelot
+lca serval
+lca caracal
+lca hyena
+lca elephant
+lca rhino
+lca hippo
+lca giraffe
+lca zebra
+lca camel
+lca llama
+lca alpaca
+lca deer
+lca elk
+lca moose
+lca reindeer
+lca antelope
+lca gazelle
+lca impala
+lca wildebeest
+lca buffalo
+lca bison
+lca yak
+lca muskox
+lca kangaroo
+lca wallaby
+lca koala
+lca wombat
+lca possum
+lca opossum
+lca platypus
+lca echidna
+lca armadillo
+lca anteater
+lca sloth
+lca monkey
+lca ape
+lca gorilla
+lca chimp
+lca bonobo
+lca orangutan
+lca gibbon
+lca lemur
+lca loris
+lca tarsier
+lca bushbaby
+lca whale
+lca dolphin
+lca porpoise
+lca seal
+lca sea lion
+lca walrus
+lca manatee
+lca dugong
+lca bat
+lca bird
+lca eagle
+lca hawk
+lca falcon
+lca owl
+lca vulture
+lca parrot
+lca macaw
+lca cockatoo
+lca parakeet
+lca budgie
+lca canary
+lca finch
+lca sparrow
+lca robin
+lca bluebird
+lca cardinal
+lca jay
+lca crow
+lca raven
+lca magpie
+lca pigeon
+lca dove
+lca duck
+lca goose
+lca swan
+lca chicken
+lca rooster
+lca hen
+lca turkey
+lca peacock
+lca pheasant
+lca quail
+lca ostrich
+lca emu
+lca penguin
+lca flamingo
+lca stork
+lca heron
+lca crane
+lca pelican
+lca seagull
+lca albatross
+lca reptile
+lca snake
+lca lizard
+lca turtle
+lca tortoise
+lca crocodile
+lca alligator
+lca frog
+lca toad
+lca salamander
+lca newt
+lca fish
+lca shark
+lca ray
+lca eel
+lca salmon
+lca trout
+lca tuna
+lca cod
+lca bass
+lca carp
+lca goldfish
+lca koi
+lca betta
+lca guppy
+lca tetra
+lca angelfish
+lca discus
+lca cichlid
+lca clownfish
+lca tang
+lca wrasse
+lca goby
+lca blenny
+lca seahorse
+lca starfish
+lca urchin
+lca cucumber
+lca jellyfish
+lca coral
+lca anemone
+lca sponge
+lca worm
+lca insect
+lca bug
+lca beetle
+lca ant
+lca bee
+lca wasp
+lca hornet
+lca fly
+lca mosquito
+lca gnat
+lca butterfly
+lca moth
+lca dragonfly
+lca damselfly
+lca grasshopper
+lca cricket
+lca locust
+lca mantis
+lca cockroach
+lca termite
+lca flea
+lca louse
+lca tick
+lca mite
+lca spider
+lca scorpion
+lca centipede
+lca millipede
+lca crab
+lca lobster
+lca shrimp
+lca prawn
+lca krill
+lca barnacle
+lca snail
+lca slug
+lca clam
+lca oyster
+lca mussel
+lca scallop
+lca squid
+lca octopus
+lca cuttlefish
+lca nautilus
+

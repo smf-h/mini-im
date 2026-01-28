@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.miniim.domain.enums.ChatType;
 import com.miniim.domain.enums.MessageStatus;
 import com.miniim.domain.enums.MessageType;
@@ -15,6 +17,8 @@ import java.time.LocalDateTime;
 @Data
 @TableName("t_message")
 public class MessageEntity {
+
+    public static final String REVOKED_PLACEHOLDER = "已撤回";
 
     /** msgId */
     @TableId(value = "id", type = IdType.ASSIGN_ID)
@@ -35,10 +39,18 @@ public class MessageEntity {
     /** 消息内容类型：见 {@link MessageType}（数据库仍存数字）。 */
     private MessageType msgType;
 
+    @JsonIgnore
     private String content;
 
     /** 消息状态：见 {@link MessageStatus}（数据库仍存数字）。 */
     private MessageStatus status;
+
+    /**
+     * 会话内单调递增序列号（cursor/稳定排序口径）。
+     *
+     * <p>对应表字段：t_message.msg_seq</p>
+     */
+    private Long msgSeq;
 
     /** client idempotency key */
     private String clientMsgId;
@@ -56,4 +68,17 @@ public class MessageEntity {
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
+
+    @JsonIgnore
+    public String getContent() {
+        return content;
+    }
+
+    @JsonProperty("content")
+    public String getContentForJson() {
+        if (status == MessageStatus.REVOKED) {
+            return REVOKED_PLACEHOLDER;
+        }
+        return content;
+    }
 }

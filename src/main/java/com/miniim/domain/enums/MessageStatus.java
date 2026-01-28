@@ -14,6 +14,8 @@ import lombok.RequiredArgsConstructor;
  *   <li>2 = 已投递（DELIVERED）</li>
  *   <li>3 = 已读（READ）</li>
  *   <li>4 = 已撤回（REVOKED）</li>
+ *   <li>5 = 已收到（RECEIVED）</li>
+ *   <li>6 = 已丢弃（DROPPED）</li>
  * </ul>
  */
 @Getter
@@ -35,7 +37,7 @@ public enum MessageStatus {
     REVOKED(4, "revoked"),
 
     RECEIVED(5, "received"),
-    DROPPED(6,"dropped");
+    DROPPED(6, "dropped");
 
     @EnumValue
     private final Integer code;

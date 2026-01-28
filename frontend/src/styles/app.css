@@ -1,0 +1,255 @@
+/* 全局样式与视觉变量（仿微信绿白） */
+:root {
+  /* Visual language SSOT (WeChat green/white) */
+  --primary: #07c160;
+  --primary-hover: #06ad56;
+  --bg: #f5f5f5;
+  --bg-sidebar: #2e2e2e;
+  --bg-list: #f7f7f7;
+  --bg-main: #ffffff;
+  --surface: #ffffff;
+  --panel: var(--surface);
+  --card: var(--surface);
+
+  --text: #111111;
+  --text-1: var(--text);
+  --text-2: #757575;
+  --text-3: #b2b2b2;
+  --muted: var(--text-2);
+
+  --border-light: #e5e5e5;
+  --divider: rgba(0, 0, 0, 0.05);
+  --border: rgba(0, 0, 0, 0.08);
+
+  --danger: #fa5151;
+  --ok: var(--primary);
+  --badge-red: #ff3b30;
+
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 6px 18px rgba(7, 193, 96, 0.14);
+
+  /* Backward-compatible aliases */
+  --bg-soft: #ededed;
+  --shadow: var(--shadow-card);
+  --shadow-soft: var(--shadow-card);
+
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-lg: var(--radius-card);
+  --radius-md: 10px;
+  --radius-sm: var(--radius-btn);
+
+  --font-base: 14px;
+  --font-lg: 16px;
+  --font-sm: 12px;
+
+  --container: 760px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.container {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.btn {
+  border: 1px solid var(--divider);
+  background: var(--panel);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: box-shadow 120ms ease, filter 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn.primary {
+  border-color: rgba(7, 193, 96, 0.4);
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: var(--shadow-float);
+}
+
+.btn.danger {
+  border-color: rgba(250, 81, 81, 0.32);
+  background: rgba(250, 81, 81, 0.1);
+  color: rgba(17, 17, 17, 0.9);
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  filter: none;
+}
+
+.btn:active:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.14);
+  border-color: rgba(7, 193, 96, 0.55);
+}
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--divider);
+  background: var(--panel);
+  color: var(--text);
+  transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgba(7, 193, 96, 0.55);
+  box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.14);
+}
+
+::selection {
+  background: rgba(7, 193, 96, 0.22);
+}
+
+.iconBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--divider);
+  background: transparent;
+  color: rgba(17, 17, 17, 0.72);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.iconBtn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.iconBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.iconBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.12);
+  border-color: rgba(7, 193, 96, 0.5);
+}
+.iconBtn[data-active='true'] {
+  border-color: rgba(7, 193, 96, 0.35);
+  background: rgba(7, 193, 96, 0.1);
+  color: rgba(7, 193, 96, 0.95);
+}
+.iconSvg {
+  width: 18px;
+  height: 18px;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--divider);
+  background: rgba(0, 0, 0, 0.03);
+  transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.searchBox:focus-within {
+  background: #ffffff;
+  border-color: rgba(7, 193, 96, 0.45);
+  box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.12);
+}
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+}
+.searchPlaceholder {
+  color: rgba(17, 17, 17, 0.45);
+}
+.searchClear {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(17, 17, 17, 0.55);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.searchClear:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0,  0, 0, 0.06);
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 12px;
+  }
+}

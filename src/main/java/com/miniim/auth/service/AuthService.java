@@ -3,6 +3,7 @@ package com.miniim.auth.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.miniim.auth.config.AuthProperties;
 import com.miniim.auth.dto.*;
+import com.miniim.domain.service.CodeService;
 import com.miniim.domain.entity.UserEntity;
 import com.miniim.domain.mapper.UserMapper;
 import io.jsonwebtoken.Claims;
@@ -24,6 +25,8 @@ public class AuthService {
     private final TokenHasher tokenHasher;
     private final RefreshTokenStore refreshTokenStore;
     private final AuthProperties props;
+    private final CodeService codeService;
+    private final SessionVersionStore sessionVersionStore;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private final SecureRandom secureRandom = new SecureRandom();
@@ -33,13 +36,17 @@ public class AuthService {
             JwtService jwtService,
             TokenHasher tokenHasher,
             RefreshTokenStore refreshTokenStore,
-            AuthProperties props
+            AuthProperties props,
+            CodeService codeService,
+            SessionVersionStore sessionVersionStore
     ) {
         this.userMapper = userMapper;
         this.jwtService = jwtService;
         this.tokenHasher = tokenHasher;
         this.refreshTokenStore = refreshTokenStore;
         this.props = props;
+        this.codeService = codeService;
+        this.sessionVersionStore = sessionVersionStore;
     }
 
     /**
@@ -61,35 +68,36 @@ public class AuthService {
         UserEntity user = userMapper.selectOne(new LambdaQueryWrapper<UserEntity>()
                 .eq(UserEntity::getUsername, request.username())
                 .last("LIMIT 1"));
-        if (user == null||user.getPasswordHash() == null ) {
-            UserEntity userEntity = new UserEntity();
-            userEntity.setUsername(request.username());
-            userEntity.setPasswordHash(passwordEncoder.encode(request.password()));
-            boolean success=userMapper.insertOrUpdate(userEntity);
-            //注册失败
-            if (!success) {
-                throw new IllegalArgumentException("注册失败");
+
+        // 兼容“首次登录自动注册”以及“历史数据 passwordHash 为空”的场景：
+        // - user 不存在：直接插入新用户
+        // - user 存在但 passwordHash 为空：补齐 passwordHash（更新同一行），避免重复插入导致 500
+        if (user == null) {
+            user = new UserEntity();
+            user.setUsername(request.username());
+            user.setPasswordHash(passwordEncoder.encode(request.password()));
+            if (userMapper.insert(user) != 1) {
+                throw new IllegalArgumentException("register_failed");
             }
-            String accessToken = jwtService.issueAccessToken(userEntity.getId());
-            log.info("<UNK>token<UNK>{}", accessToken);
-            String refreshToken = issueRefreshToken(userEntity.getId());
-            log.info("<UNK>refreshToken<UNK>{}", refreshToken);
-            return new LoginResponse(
-                    userEntity.getId(),
-                    accessToken,
-                    refreshToken,
-                    props.accessTokenTtlSeconds(),
-                    props.refreshTokenTtlSeconds()
-            );
-        }
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        } else if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
+            user.setPasswordHash(passwordEncoder.encode(request.password()));
+            if (userMapper.updateById(user) != 1) {
+                throw new IllegalArgumentException("register_failed");
+            }
+        } else if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new IllegalArgumentException("invalid_username_or_password");
         }
 
-        String accessToken = jwtService.issueAccessToken(user.getId());
-        log.info("access token: {}", accessToken);
+        // 确保 friendCode 已生成（用于“按码加好友”与个人主页展示）。
+        try {
+            codeService.ensureFriendCode(user.getId());
+        } catch (Exception e) {
+            log.warn("ensure friendCode failed: userId={}, err={}", user.getId(), e.toString());
+        }
+
+        long sv = sessionVersionStore.bump(user.getId());
+        String accessToken = jwtService.issueAccessToken(user.getId(), sv);
         String refreshToken = issueRefreshToken(user.getId());
-        log.info("refresh token: {}", refreshToken);
 
         return new LoginResponse(
                 user.getId(),
@@ -121,7 +129,11 @@ public class AuthService {
         // 可选：使用时延长 TTL（滑动过期）。不想滑动就删掉这一行。
         refreshTokenStore.touch(tokenHash, Duration.ofSeconds(props.refreshTokenTtlSeconds()));
 
-        String accessToken = jwtService.issueAccessToken(session.userId());
+        long sv = sessionVersionStore.current(session.userId());
+        if (sv < 0) {
+            sv = 0;
+        }
+        String accessToken = jwtService.issueAccessToken(session.userId(), sv);
         return new RefreshResponse(session.userId(), accessToken, props.accessTokenTtlSeconds());
     }
 
@@ -129,6 +141,10 @@ public class AuthService {
         Jws<Claims> jws = jwtService.parseAccessToken(request.accessToken());
         Claims claims = jws.getPayload();
         long userId = jwtService.getUserId(claims);
+        long sv = jwtService.getSessionVersion(claims);
+        if (!sessionVersionStore.isValid(userId, sv)) {
+            throw new JwtException("session_invalid");
+        }
         return VerifyResponse.ok(userId);
     }
 

@@ -1,0 +1,12 @@
+mybatis-plus:
+  configuration:
+    # 开发期如果你需要看到类似 “==> Preparing: select ...” 的原始 SQL，请用 StdOutImpl
+    # （它会直接打印到 stdout，不依赖 logback 级别/Logger 名称配置）
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    org.mybatis: debug
+    org.apache.ibatis: debug
+    com.baomidou.mybatisplus: debug
+    com.miniim.domain.mapper: debug

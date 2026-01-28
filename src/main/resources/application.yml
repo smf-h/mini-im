@@ -7,8 +7,13 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://127.0.0.1:3306/mini_im?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: 2823128231
+    username: ${IM_MYSQL_USERNAME:root}
+    password: ${IM_MYSQL_PASSWORD:}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
   data:
     redis:
       host: 127.0.0.1
@@ -18,7 +23,6 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       id-type: ASSIGN_ID
@@ -28,15 +32,32 @@ logging:
     com.miniim: info
 
 im:
+  ratelimit:
+    enabled: true
+    trust-forwarded-headers: true
+    fail-open: true
+    key-prefix: "im:rl:"
+  cache:
+    enabled: true
+    user-profile-ttl-seconds: 1800
+    friend-ids-ttl-seconds: 1800
+    group-base-ttl-seconds: 600
+    group-member-ids-ttl-seconds: 600
+    single-chat-pair-ttl-seconds: 604800
   caffeine:
     client-msg-id:
       initial-capacity: 100
       maximum-size: 1000
-      expire-after-access-seconds: 600
+      expire-after-access-seconds: 1800
+  cron:
+    resend:
+      # 可选兜底补发：默认关闭；需要时改为 true
+      enabled: false
+      fixed-delay-ms: 60000
   auth:
     issuer: mini-im
     # 生产环境请通过环境变量注入，至少 32 字符
-    jwt-secret: "change-me-please-change-me-please-change-me"
+    jwt-secret: ${IM_AUTH_JWT_SECRET:change-me-please-change-me-please-change-me}
     access-token-ttl-seconds: 1800
     refresh-token-ttl-seconds: 2592000
 
@@ -49,6 +70,10 @@ im:
       host: 0.0.0.0
       port: 9001
       path: /ws
+    group-fanout:
+      enabled: true
+      batch-size: 500
+      fail-open: true
     # 业务服务提供给网关的鉴权接口（网关握手/首包鉴权时调用）
     auth-verify-url: http://127.0.0.1:8080/auth/verify
     # 业务服务调用网关推送消息的 HTTP 地址（你后面实现 push API 用）
@@ -58,3 +83,17 @@ im:
     # 可靠投递相关（服务端等待 ACK 的时间）
     ack-timeout-ms: 5000
     max-retry: 3
+
+  group-chat:
+    strategy:
+      mode: auto
+      group-size-threshold: 2000
+      online-user-threshold: 500
+      notify-max-online-user: 2000
+      huge-group-no-notify-size: 10000
+
+  code:
+    # FriendCode/GroupCode：用于“按码加好友/申请入群”（不可枚举，可重置限频）
+    friend-code-length: 8
+    group-code-length: 8
+    reset-cooldown-seconds: 86400
