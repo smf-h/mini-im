@@ -2,6 +2,13 @@
 
 > Spring Boot + Netty WebSocket + MyBatis-Plus 的 IM 服务端 + Vue3 联调前端。
 
+## 目录结构速览
+
+- `src/`：后端（Spring Boot）
+- `frontend/`：前端（Vue3 + Vite）
+- `scripts/`：压测/联调脚本（k6 + Java）
+- `helloagents/wiki/`：项目文档（以代码为准同步更新）
+
 ## 快速开始（本地，首次启动可能稍久）
 
 前置依赖：
@@ -31,6 +38,12 @@ $env:IM_MYSQL_PASSWORD = "你的MySQL密码"
 $env:IM_AUTH_JWT_SECRET = "change-me-please-change-me-please-change-me"
 
 mvn spring-boot:run
+```
+
+也可以先打包再启动：
+```powershell
+mvn -DskipTests package
+java -jar \"target\\mini-im-0.0.1-SNAPSHOT.jar\"
 ```
 
 启动后端口：
@@ -110,6 +123,7 @@ npm run dev
 - `IM_MYSQL_USERNAME`（默认 `root`）
 - `IM_MYSQL_PASSWORD`（默认空，建议显式设置）
 - `IM_AUTH_JWT_SECRET`（默认有占位值，建议显式设置）
+- `IM_REDIS_HOST` / `IM_REDIS_PORT` / `IM_REDIS_DATABASE`（默认 `127.0.0.1/6379/0`）
 
 配置模板（便于容器化/部署时通过环境变量注入）：
 - `src/main/resources/application.env.yml`
@@ -122,6 +136,10 @@ npm run dev
 - WS 投递 SSOT（一页纸）：`helloagents/wiki/ws_delivery_ssot_onepager.md`
 - 测试与联调说明：`helloagents/wiki/testing.md`
 - 前端说明：`frontend/README.md`
+
+## 说明
+
+- 本仓库当前不包含小程序端（已移除），联调以 `frontend/` 为准。
 
 ## 常见问题（FAQ）
 
