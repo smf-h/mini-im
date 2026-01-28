@@ -9,8 +9,9 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>数字与类型映射：</p>
  * <ul>
- *   <li>1 = 已投递（DELIVERED）</li>
- *   <li>2 = 已读（READ）</li>
+ *   <li>1 = 已保存（SAVED）</li>
+ *   <li>2 = 已投递（DELIVERED）</li>
+ *   <li>3 = 已读（READ）</li>
  * </ul>
  */
 @Getter

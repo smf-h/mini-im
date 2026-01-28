@@ -14,7 +14,7 @@ import java.util.List;
 public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity> implements MessageService {
 
     @Override
-    public List<MessageEntity> cursorBySingleChatId(Long singleChatId, Long limit, Long lastId) {
+    public List<MessageEntity> cursorBySingleChatId(Long singleChatId, Long limit, Long lastSeq) {
         if (singleChatId == null || singleChatId <= 0) {
             return List.of();
         }
@@ -33,16 +33,16 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity
 
         LambdaQueryWrapper<MessageEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(MessageEntity::getSingleChatId, singleChatId);
-        if (lastId != null) {
-            wrapper.lt(MessageEntity::getId, lastId);
+        if (lastSeq != null) {
+            wrapper.lt(MessageEntity::getMsgSeq, lastSeq);
         }
-        wrapper.orderByDesc(MessageEntity::getId);
+        wrapper.orderByDesc(MessageEntity::getMsgSeq);
         wrapper.last("limit " + safeLimit);
         return this.list(wrapper);
     }
 
     @Override
-    public List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastId) {
+    public List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastSeq) {
         if (groupId == null || groupId <= 0) {
             return List.of();
         }
@@ -62,16 +62,16 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity
         LambdaQueryWrapper<MessageEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(MessageEntity::getGroupId, groupId)
                 .eq(MessageEntity::getChatType, com.miniim.domain.enums.ChatType.GROUP);
-        if (lastId != null) {
-            wrapper.lt(MessageEntity::getId, lastId);
+        if (lastSeq != null) {
+            wrapper.lt(MessageEntity::getMsgSeq, lastSeq);
         }
-        wrapper.orderByDesc(MessageEntity::getId);
+        wrapper.orderByDesc(MessageEntity::getMsgSeq);
         wrapper.last("limit " + safeLimit);
         return this.list(wrapper);
     }
 
     @Override
-    public List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceId) {
+    public List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceSeq) {
         if (groupId == null || groupId <= 0) {
             return List.of();
         }
@@ -91,10 +91,10 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity
         LambdaQueryWrapper<MessageEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(MessageEntity::getGroupId, groupId)
                 .eq(MessageEntity::getChatType, com.miniim.domain.enums.ChatType.GROUP);
-        if (sinceId != null) {
-            wrapper.gt(MessageEntity::getId, sinceId);
+        if (sinceSeq != null) {
+            wrapper.gt(MessageEntity::getMsgSeq, sinceSeq);
         }
-        wrapper.orderByAsc(MessageEntity::getId);
+        wrapper.orderByAsc(MessageEntity::getMsgSeq);
         wrapper.last("limit " + safeLimit);
         return this.list(wrapper);
     }
@@ -124,7 +124,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, MessageEntity
         Page<MessageEntity> page = new Page<>(safePageNo, safePageSize);
         LambdaQueryWrapper<MessageEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(MessageEntity::getSingleChatId, singleChatId);
-        wrapper.orderByDesc(MessageEntity::getId);
+        wrapper.orderByDesc(MessageEntity::getMsgSeq);
         return this.page(page, wrapper);
     }
 

@@ -57,7 +57,7 @@ async function submit() {
           <div v-if="errorMsg" class="muted" style="color: var(--danger)">{{ errorMsg }}</div>
         </div>
 
-        <div class="hint muted">WS：浏览器会用 `?token=` 握手鉴权，连接后再发送 `AUTH` 帧。</div>
+        <div class="hint muted">WS：连接建立后立即发送 `AUTH` 帧完成鉴权（URL 不携带 token）。</div>
       </div>
     </div>
   </div>

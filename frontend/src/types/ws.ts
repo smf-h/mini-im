@@ -2,6 +2,7 @@ export type WsEnvelope = {
   type: string
   clientMsgId?: string | null
   serverMsgId?: string | null
+  msgSeq?: string | number | null
   from?: string | null
   to?: string | null
   groupId?: string | null

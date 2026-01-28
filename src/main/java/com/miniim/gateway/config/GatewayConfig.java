@@ -7,14 +7,10 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties({
         GatewayProperties.class,
         WsBackpressureProperties.class,
-        WsEncodeProperties.class,
-        WsPerfTraceProperties.class,
-        WsInboundQueueProperties.class,
         WsAckBatchProperties.class,
         WsResendProperties.class,
         WsSingleChatUpdatedAtDebounceProperties.class,
-        WsGroupUpdatedAtDebounceProperties.class,
-        WsSingleChatTwoPhaseProperties.class
+        WsGroupUpdatedAtDebounceProperties.class
 })
 public class GatewayConfig {
 }

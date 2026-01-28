@@ -166,10 +166,10 @@ public class SingleChatConversationController {
             dto.setUnreadCount(unread == null ? 0L : unread);
 
             com.miniim.domain.entity.SingleChatMemberEntity myMember = memberByChatAndUser.get(chat.getId() + ":" + userId);
-            dto.setMyLastReadMsgId(myMember == null ? null : myMember.getLastReadMsgId());
+            dto.setMyLastReadMsgSeq(myMember == null ? null : myMember.getLastReadMsgSeq());
 
             com.miniim.domain.entity.SingleChatMemberEntity peerMember = memberByChatAndUser.get(chat.getId() + ":" + peerUserId);
-            dto.setPeerLastReadMsgId(peerMember == null ? null : peerMember.getLastReadMsgId());
+            dto.setPeerLastReadMsgSeq(peerMember == null ? null : peerMember.getLastReadMsgSeq());
 
             MessageEntity last = byChatId.get(chat.getId());
             if (last != null) {

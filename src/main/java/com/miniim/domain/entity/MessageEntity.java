@@ -45,6 +45,13 @@ public class MessageEntity {
     /** 消息状态：见 {@link MessageStatus}（数据库仍存数字）。 */
     private MessageStatus status;
 
+    /**
+     * 会话内单调递增序列号（cursor/稳定排序口径）。
+     *
+     * <p>对应表字段：t_message.msg_seq</p>
+     */
+    private Long msgSeq;
+
     /** client idempotency key */
     private String clientMsgId;
 

@@ -17,9 +17,9 @@ const route = useRoute()
 const router = useRouter()
 
 const wsBadge = computed(() => {
-  if (!ws.connected) return 'WS: 离线'
-  if (!ws.authed) return 'WS: 已连(未鉴权)'
-  return 'WS: 在线'
+  if (!ws.connected) return '离线'
+  if (!ws.authed) return '已连(未鉴权)'
+  return '在线'
 })
 
 const wsCursor = ref(0)
@@ -234,7 +234,6 @@ onMounted(() => {
           </div>
         <div class="row">
           <div class="muted">{{ wsBadge }}</div>
-          <div class="muted">uid={{ auth.userId }}</div>
           <button class="btn" @click="ensureWs">重连</button>
           <button class="btn danger" @click="logout">退出</button>
         </div>

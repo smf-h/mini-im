@@ -98,7 +98,7 @@ export default function () {
   const token = issueAccessToken({ userId, sessionVersion, issuer, jwtSecret, ttlSeconds });
 
   const wsUrl = pickWsUrlForRole(isSender);
-  const url = `${wsUrl}?token=${encodeURIComponent(token)}`;
+  const url = wsUrl;
 
   const res = ws.connect(url, {}, function (socket) {
     let authed = false;

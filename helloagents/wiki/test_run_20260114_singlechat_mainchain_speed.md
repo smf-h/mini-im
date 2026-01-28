@@ -1,5 +1,7 @@
 # 单聊主链路提速回归（P50 回到 <1s）：updated_at 异步化 + 串行队列 inline + 5 实例均衡 pinning
 
+> ⚠️ 历史记录：本文部分“分段耗时（ws_perf）/ 对应产物文件”在后续版本已移除；本文保留结论与分析思路，涉及分段数据的部分不再可直接复现。
+
 > 目标：解决 open-loop（`msgIntervalMs=3000`）下 E2E p50 秒级的问题，把单聊主链路（落库→ACK(saved)→在线投递）拉回 <1s 量级，并给出可复现数据。
 
 ---
@@ -10,12 +12,13 @@
 - **本轮结果（5 实例、重复3次平均）**：E2E `p50≈410ms`，`p95≈754ms`，`p99≈841ms`
 - **offered load**：`attempted≈819 msg/s`，`sent≈819 msg/s`
 - **错误**：`wsErrorAvg≈236.7`（需结合 `single_e2e_5000_r*.json` / gateway 日志细分原因）
-- **ws_perf（gw-1 摘要）**：`queueMs p50=0ms`，`dbQueueMs p50≈536ms`，`dbToEventLoopMs p95≈95ms`
+- **分段耗时（历史）**：当时用于定位“排队主导”的依据（现已移除）
 
 ### 1.2 高压 burst（open-loop, msgIntervalMs=100, clients=5000）
 - offered load 明显超过系统可持续吞吐：`attempted≈21870 msg/s`，`sent≈9200 msg/s`
 - E2E 出现“排队型延迟”（可复现但不作为 SLO）：`p50≈34s`，`p95≈50s`，`p99≈53s`
 - `ws_perf` 显示瓶颈在**连接级串行队列排队**（`queueMs p50≈13s`），DB 排队反而较小（`dbQueueMs p50≈38ms`）
+  -（历史：该结论来自当时的分段打点日志，现已移除）
 
 ---
 
@@ -61,7 +64,6 @@ powershell -ExecutionPolicy Bypass -File "scripts/ws-cluster-5x-test/run.ps1" `
 - `logs/ws-cluster-5x-test_20260114_174932/`
 - 关键结果：
   - `logs/ws-cluster-5x-test_20260114_174932/single_e2e_5000_avg.json`
-  - `logs/ws-cluster-5x-test_20260114_174932/ws_perf_summary_gw1.json`
 
 ### 3.3 高压 burst（msgIntervalMs=100）
 ```powershell
@@ -78,7 +80,6 @@ powershell -ExecutionPolicy Bypass -File "scripts/ws-cluster-5x-test/run.ps1" `
 - `logs/ws-cluster-5x-test_20260114_180604/`
 - 关键结果：
   - `logs/ws-cluster-5x-test_20260114_180604/single_e2e_5000_avg.json`
-  - `logs/ws-cluster-5x-test_20260114_180604/ws_perf_summary_gw1.json`
 
 ---
 
@@ -86,8 +87,8 @@ powershell -ExecutionPolicy Bypass -File "scripts/ws-cluster-5x-test/run.ps1" `
 
 ### 4.1 “秒级 p50”的直接成因：热点 + 排队
 旧口径下 `rolePinned` 会把 sender/receiver 固定到 `wsUrls[0/1]`，在 5 实例场景会形成热点，放大：
-- `ws_perf single_chat.dbQueueMs`：DB 线程池排队
-- `ws_perf single_chat.queueMs`：连接串行队列排队
+- DB executor 线程池排队
+- 连接级串行队列排队
 
 当这两段排队进入秒级后，E2E p50 就会被拖到秒级（即使单条 SQL 仍是毫秒级）。
 
@@ -106,5 +107,4 @@ powershell -ExecutionPolicy Bypass -File "scripts/ws-cluster-5x-test/run.ps1" `
 
 2) **burst 的尾延迟治理要靠“可控失败/限流”，不是硬抗**
 - 当 offered load 远大于可持续吞吐时，`queueMs` 会线性爬升并把 E2E 拉到几十秒
-- 若目标是“尾延迟收敛”，应启用/收紧入站门禁（`inbound-queue`）并让客户端退避重试，把过载转成可控失败
-
+- 若目标是“尾延迟收敛”，应引入入站限流/拒绝策略并让客户端退避重试，把过载转成可控失败

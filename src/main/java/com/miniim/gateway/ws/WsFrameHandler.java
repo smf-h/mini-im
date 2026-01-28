@@ -136,25 +136,32 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             return;
         }
 
-        // 除了 AUTH/REAUTH 以外，其他消息都要求：已鉴权且 accessToken 未过期。
-        if (!"AUTH".equals(msg.type) && !"REAUTH".equals(msg.type)) {
-            if (!sessionRegistry.isAuthed(ctx.channel())) {
+        Channel ch = ctx.channel();
+        boolean authed = sessionRegistry.isAuthed(ch);
+
+        // AUTH-first：未鉴权只允许 AUTH / PING / PONG；其他一律 ERROR unauthorized 并断连。
+        if (!authed) {
+            if (!isPreAuthAllowed(msg.type)) {
                 wsWriter.writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
                 ctx.close();
                 return;
             }
-            if (isExpired(ctx)) {
-                wsWriter.writeError(ctx, "token_expired", msg.getClientMsgId(), msg.getServerMsgId());
-                ctx.close();
-                return;
-            }
-            if (!revalidateSessionVersionIfNeeded(ctx, msg)) {
-                return;
+        } else {
+            // 已鉴权：业务消息要求 accessToken 未过期 + sessionVersion 复验通过（限频）。
+            if (!"AUTH".equals(msg.type) && !"REAUTH".equals(msg.type) && !"PING".equals(msg.type) && !"PONG".equals(msg.type)) {
+                if (isExpired(ctx)) {
+                    wsWriter.writeError(ctx, "token_expired", msg.getClientMsgId(), msg.getServerMsgId());
+                    ctx.close();
+                    return;
+                }
+                if (!revalidateSessionVersionIfNeeded(ctx, msg)) {
+                    return;
+                }
             }
         }
 
         // 业务类消息做用户级限流；心跳/鉴权/续期不参与（避免误伤弱网重连/续期）。
-        if (shouldApplyUserLimit(msg.type) && sessionRegistry.isAuthed(ctx.channel())) {
+        if (shouldApplyUserLimit(msg.type) && authed) {
             if (!consumeUserToken(ctx)) {
                 wsWriter.writeError(ctx, "too_many_requests", msg.getClientMsgId(), msg.getServerMsgId());
                 ctx.close();
@@ -219,6 +226,10 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<TextWebSocketFra
             return true;
         }
         return !("PING".equals(type) || "PONG".equals(type) || "AUTH".equals(type) || "REAUTH".equals(type));
+    }
+
+    private static boolean isPreAuthAllowed(String type) {
+        return "AUTH".equals(type) || "PING".equals(type) || "PONG".equals(type);
     }
 
     private static boolean recordBadJsonAndShouldKeep(ChannelHandlerContext ctx) {

@@ -33,7 +33,8 @@ flowchart LR
 - **WebSocket（主链路）**：单聊/群聊消息、好友申请、业务 ACK（落库确认/接收确认）、心跳。
 - **HTTP（展示/查询）**：会话列表、好友/申请列表、历史消息分页（cursor）、基础管理类接口。
 
-## 投递可靠性（v1 思路）
-- 发送方以 `ACK(SAVED)` 作为“服务端落库确认”；未收到则基于 `clientMsgId` 重发（幂等）。
-- 接收方以 `ACK_RECEIVED` 作为“已收到确认”；未收到视为失败。
-- 失败兜底：定时任务扫描超时消息并重发；离线直接标记为 `DROPPED`，待上线后再补发。
+## 投递可靠性（v1 口径，以代码为准）
+- 发送方：以 `ACK(SAVED)` 作为“服务端落库确认”；未收到则基于 `clientMsgId` 重发（幂等）。
+- 接收方：收到消息后回 `ACK(ackType=delivered/read, serverMsgId=...)` 推进成员游标（cursor，SSOT 在 DB）。
+  - 兼容：`ack_read` 视为 read。
+- 离线补发/兜底补发：服务端按 `last_delivered_msg_id` 拉取未投递区间并补发；兜底定时补发需显式开启 `im.cron.resend.enabled=true`（默认关闭）。

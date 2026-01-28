@@ -1,13 +1,10 @@
 package com.miniim.gateway.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.miniim.auth.service.JwtService;
 import com.miniim.auth.service.SessionVersionStore;
 import com.miniim.gateway.config.GatewayProperties;
 import com.miniim.gateway.config.WsBackpressureProperties;
 import com.miniim.gateway.session.SessionRegistry;
-import com.miniim.gateway.session.WsRouteStore;
-import com.miniim.gateway.ws.cluster.WsClusterBus;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -34,11 +31,8 @@ public class NettyWsServer implements SmartLifecycle {
 
     private final GatewayProperties props;
     private final ObjectMapper objectMapper;
-    private final JwtService jwtService;
     private final SessionVersionStore sessionVersionStore;
     private final SessionRegistry sessionRegistry;
-    private final WsRouteStore routeStore;
-    private final WsClusterBus clusterBus;
     private final WsWriter wsWriter;
     private final WsAuthHandler wsAuthHandler;
     private final WsPingHandler wsPingHandler;
@@ -57,11 +51,8 @@ public class NettyWsServer implements SmartLifecycle {
 
     public NettyWsServer(GatewayProperties props,
                          ObjectMapper objectMapper,
-                         JwtService jwtService,
                          SessionVersionStore sessionVersionStore,
                          SessionRegistry sessionRegistry,
-                         WsRouteStore routeStore,
-                         WsClusterBus clusterBus,
                          WsWriter wsWriter,
                          WsAuthHandler wsAuthHandler,
                          WsPingHandler wsPingHandler,
@@ -74,11 +65,8 @@ public class NettyWsServer implements SmartLifecycle {
                          WsBackpressureProperties backpressureProps) {
         this.props = props;
         this.objectMapper = objectMapper;
-        this.jwtService = jwtService;
         this.sessionVersionStore = sessionVersionStore;
         this.sessionRegistry = sessionRegistry;
-        this.routeStore = routeStore;
-        this.clusterBus = clusterBus;
         this.wsWriter = wsWriter;
         this.wsAuthHandler = wsAuthHandler;
         this.wsPingHandler = wsPingHandler;
@@ -134,17 +122,7 @@ public class NettyWsServer implements SmartLifecycle {
                         p.addLast(new IdleStateHandler(90, 60, 0));
                         p.addLast(new WsBackpressureHandler(backpressureProps));
 
-                        // 4) 握手鉴权：在 HTTP Upgrade 阶段校验 accessToken，并把 userId/exp 绑定到 channel
-                        p.addLast(new WsHandshakeAuthHandler(
-                                props.path(),
-                                jwtService,
-                                sessionVersionStore,
-                                sessionRegistry,
-                                routeStore,
-                                clusterBus
-                        ));
-
-                        // 5) WebSocket 协议处理：
+                        // 4) WebSocket 协议处理：
                         //    - 处理握手（upgrade）
                         //    - 自动处理 Ping/Pong 帧（注意：这是 WebSocket 协议层的 ping/pong）
                         //    - 把握手后的 TextWebSocketFrame 等上层帧往后传
@@ -156,6 +134,9 @@ public class NettyWsServer implements SmartLifecycle {
                                 .maxFramePayloadLength(65536)
                                 .build();
                         p.addLast(new WebSocketServerProtocolHandler(wsConfig));
+
+                        // 5) AUTH-first：握手完成后必须在窗口内完成 AUTH，否则先回 ERROR 再断连。
+                        p.addLast(new WsAuthTimeoutHandler(sessionRegistry, wsWriter, 3000));
 
                         // 6) 业务帧处理：我们自己定义的 JSON 文本协议（PING/...）
                         p.addLast(new WsFrameHandler(

@@ -19,8 +19,7 @@ public interface SingleChatMemberService extends IService<SingleChatMemberEntity
      */
     void ensureMembersForUser(long userId);
 
-    void markDelivered(long singleChatId, long userId, long msgId);
+    void markDelivered(long singleChatId, long userId, long msgSeq);
 
-    void markRead(long singleChatId, long userId, long msgId);
+    void markRead(long singleChatId, long userId, long msgSeq);
 }
-

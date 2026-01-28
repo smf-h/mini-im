@@ -7,6 +7,18 @@ type RequestOptions = {
   retryOn401?: boolean
 }
 
+async function gotoLoginSafe() {
+  try {
+    const mod = await import('../router')
+    const router = mod.router
+    if (router.currentRoute.value.path !== '/login') {
+      await router.push('/login')
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function apiGet<T>(path: string, opts?: RequestOptions): Promise<T> {
   return apiRequest<T>(path, { method: 'GET' }, opts)
 }
@@ -42,9 +54,16 @@ export async function apiRequest<T>(path: string, init: RequestInit, opts?: Requ
       await auth.refreshAccessToken()
     } catch {
       auth.clear()
+      void gotoLoginSafe()
       throw new Error('unauthorized')
     }
     return apiRequest<T>(path, init, { ...opts, retryOn401: false })
+  }
+
+  if (authRequired && !retryOn401 && !json.ok && json.code === 40100) {
+    auth.clear()
+    void gotoLoginSafe()
+    throw new Error('unauthorized')
   }
 
   if (status === 401 && authRequired && retryOn401) {
@@ -52,9 +71,16 @@ export async function apiRequest<T>(path: string, init: RequestInit, opts?: Requ
       await auth.refreshAccessToken()
     } catch {
       auth.clear()
+      void gotoLoginSafe()
       throw new Error('unauthorized')
     }
     return apiRequest<T>(path, init, { ...opts, retryOn401: false })
+  }
+
+  if (status === 401 && authRequired && !retryOn401) {
+    auth.clear()
+    void gotoLoginSafe()
+    throw new Error('unauthorized')
   }
 
   return unwrapResult(json)

@@ -153,7 +153,7 @@ public class WsLoadTest {
             inflight.set(0);
             String token = issueAccessToken(args.jwtSecret, args.jwtIssuer, userId, args.sessionVersion, args.jwtTtlSeconds);
             String wsUrl = pickWsUrl(args.wsUrls, args.rolePinned, userId);
-            String url = wsUrl + "?token=" + urlEncode(token);
+            String url = wsUrl;
 
             CompletableFuture<WebSocket> f = httpClient.newWebSocketBuilder()
                     .connectTimeout(Duration.ofSeconds(10))
@@ -270,7 +270,7 @@ public class WsLoadTest {
                     }
                 }
 
-                // ACK_RECEIVED: 避免 cron resend / 兜底补发导致重复投递与乱序
+                // ACK(delivered): 推进 delivered cursor，避免 cron resend / 兜底补发导致重复投递与乱序
                 Long from = asLong(msg.get("from"));
                 if (args.sendAckReceive && !sender && from != null && smid != null && clientMsgId != null && !clientMsgId.isBlank()) {
                     long now = System.currentTimeMillis();
@@ -279,7 +279,7 @@ public class WsLoadTest {
                             .add("\"clientMsgId\":\"" + escapeJson(clientMsgId) + "\"")
                             .add("\"serverMsgId\":" + smid)
                             .add("\"to\":" + from)
-                            .add("\"ackType\":\"ack_receive\"")
+                            .add("\"ackType\":\"delivered\"")
                             .add("\"ts\":" + now)
                             .toString();
                     WebSocket socket = this.ws;

@@ -20,10 +20,6 @@ param(
  
   [long]$UserBase = 20000000,
   [bool]$AutoUserBase = $true,
- 
-  [int]$PerfTraceSlowMs = 500,
-  [double]$PerfTraceSampleRate = 0.01,
-  [switch]$PerfTraceFull,
 
   [bool]$AutoTuneLocalThreads = $true,
   [int]$NettyBossThreads = 1,
@@ -44,11 +40,6 @@ param(
   [int]$JdbcMaxPoolSize = 0,
   [int]$JdbcMinIdle = 0,
   [int]$JdbcConnectionTimeoutMs = 0,
-
-  [switch]$WsEncodeEnabled,
-
-  [switch]$InboundQueueEnabled,
-  [int]$InboundQueueMaxPendingPerConn = 2000,
 
   [bool]$SingleChatUpdatedAtDebounceEnabled = $true,
   [int]$SingleChatUpdatedAtDebounceWindowMs = 1000,
@@ -86,12 +77,6 @@ param(
   [int]$LargeE2eRepeats = 1,
   [int]$LargeE2eDurationSeconds = 60,
 
-  [switch]$SingleChatTwoPhaseEnabled,
-  [switch]$SingleChatTwoPhaseDeliverBeforeSaved,
-  [bool]$SingleChatTwoPhaseFailOpen = $true,
-  [ValidateSet("redis","local")]
-  [string]$SingleChatTwoPhaseMode = "redis",
-
   [int]$GroupClients = 200,
   [int]$GroupSenders = 20,
   [int]$GroupMsgIntervalMs = 50,
@@ -116,12 +101,6 @@ $ErrorActionPreference = "Stop"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 $env:CONDA_NO_PLUGINS = "true"
-
-if ($PerfTraceFull) {
-  # Force full coverage: avoid "slow-only + sampling" bias in ws_perf.
-  $PerfTraceSlowMs = 0
-  $PerfTraceSampleRate = 1.0
-}
 
 if ($AutoUserBase -and -not $PSBoundParameters.ContainsKey("UserBase")) {
   # Avoid cross-run Redis idempotency pollution: clientMsgId is deterministic (userId-seq),
@@ -358,9 +337,6 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("--im.gateway.ws.boss-threads=$NettyBossThreads")
   if ($NettyWorkerThreads -gt 0) { [void]$argList.Add("--im.gateway.ws.worker-threads=$NettyWorkerThreads") }
   [void]$argList.Add("--im.group-chat.strategy.mode=$GroupStrategyMode")
-  [void]$argList.Add("--im.gateway.ws.perf-trace.enabled=true")
-  [void]$argList.Add("--im.gateway.ws.perf-trace.slow-ms=$PerfTraceSlowMs")
-  [void]$argList.Add("--im.gateway.ws.perf-trace.sample-rate=$PerfTraceSampleRate")
   [void]$argList.Add("--im.executors.db.core-pool-size=$DbCorePoolSize")
   [void]$argList.Add("--im.executors.db.max-pool-size=$DbMaxPoolSize")
   [void]$argList.Add("--im.executors.db.queue-capacity=$DbQueueCapacity")
@@ -370,9 +346,6 @@ function Start-Instance([int]$Index) {
   if ($AckCorePoolSize -gt 0) { [void]$argList.Add("--im.executors.ack.core-pool-size=$AckCorePoolSize") }
   if ($AckMaxPoolSize -gt 0) { [void]$argList.Add("--im.executors.ack.max-pool-size=$AckMaxPoolSize") }
   if ($AckQueueCapacity -gt 0) { [void]$argList.Add("--im.executors.ack.queue-capacity=$AckQueueCapacity") }
-  [void]$argList.Add("--im.gateway.ws.encode.enabled=$($WsEncodeEnabled.IsPresent.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.inbound-queue.enabled=$($InboundQueueEnabled.IsPresent.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.inbound-queue.max-pending-per-conn=$InboundQueueMaxPendingPerConn")
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.debounce-enabled=$($SingleChatUpdatedAtDebounceEnabled.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.debounce-window-ms=$SingleChatUpdatedAtDebounceWindowMs")
   [void]$argList.Add("--im.gateway.ws.single-chat.updated-at.sync-update=$($SingleChatUpdatedAtSyncUpdate.ToString().ToLower())")
@@ -382,10 +355,6 @@ function Start-Instance([int]$Index) {
   [void]$argList.Add("--im.gateway.ws.ack.batch-enabled=$($AckBatchEnabled.ToString().ToLower())")
   [void]$argList.Add("--im.gateway.ws.ack.batch-window-ms=$AckBatchWindowMs")
   [void]$argList.Add("--im.gateway.ws.resend.after-auth-enabled=$($ResendAfterAuthEnabled.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.single-chat.two-phase.enabled=$($SingleChatTwoPhaseEnabled.IsPresent.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.single-chat.two-phase.deliver-before-saved=$($SingleChatTwoPhaseDeliverBeforeSaved.IsPresent.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.single-chat.two-phase.fail-open=$($SingleChatTwoPhaseFailOpen.ToString().ToLower())")
-  [void]$argList.Add("--im.gateway.ws.single-chat.two-phase.mode=$SingleChatTwoPhaseMode")
 
   $args = $argList.ToArray()
   $tail = ($args | Select-Object -Last 5) -join " | "
@@ -607,22 +576,6 @@ function Run-StepRepeated([string]$Name, [int]$Times, [scriptblock]$Fn, [scriptb
     }
   } else {
     $results.groupSkipped = $true
-  }
-
-  # Perf parse: per-instance summaries
-  try {
-    $perfByInstance = [ordered]@{}
-    for ($i = 0; $i -lt $instList.Count; $i++) {
-      $gw = $i + 1
-      $perfPath = Run-Step ("ws_perf_summary_gw" + $gw) {
-        & "scripts/ws-perf-tools/parse-ws-perf.ps1" -LogPath $instList[$i].OutLog -MaxLines 450000
-      }
-      $perfByInstance[("gw" + $gw)] = $perfPath
-    }
-    $results.perf = $perfByInstance["gw1"]
-    $results.perfByInstance = $perfByInstance
-  } catch {
-    $results.perfError = $_.Exception.Message
   }
 
   $resultsPath = Join-Path $runDir "summary.json"

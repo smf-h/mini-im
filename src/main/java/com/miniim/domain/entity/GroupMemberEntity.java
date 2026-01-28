@@ -36,6 +36,12 @@ public class GroupMemberEntity {
 
     private Long lastReadMsgId;
 
+    /** delivered cursor by msg_seq（会话内序列）。 */
+    private Long lastDeliveredMsgSeq;
+
+    /** read cursor by msg_seq（会话内序列）。 */
+    private Long lastReadMsgSeq;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

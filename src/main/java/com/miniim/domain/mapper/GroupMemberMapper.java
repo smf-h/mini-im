@@ -21,4 +21,19 @@ public interface GroupMemberMapper extends BaseMapper<GroupMemberEntity> {
             where group_id = #{groupId} and user_id = #{userId}
             """)
     int markRead(@Param("groupId") long groupId, @Param("userId") long userId, @Param("msgId") long msgId);
+
+    @Update("""
+            update t_group_member
+            set last_delivered_msg_seq = greatest(ifnull(last_delivered_msg_seq, 0), #{msgSeq})
+            where group_id = #{groupId} and user_id = #{userId}
+            """)
+    int markDeliveredSeq(@Param("groupId") long groupId, @Param("userId") long userId, @Param("msgSeq") long msgSeq);
+
+    @Update("""
+            update t_group_member
+            set last_read_msg_seq = greatest(ifnull(last_read_msg_seq, 0), #{msgSeq}),
+                last_delivered_msg_seq = greatest(ifnull(last_delivered_msg_seq, 0), #{msgSeq})
+            where group_id = #{groupId} and user_id = #{userId}
+            """)
+    int markReadSeq(@Param("groupId") long groupId, @Param("userId") long userId, @Param("msgSeq") long msgSeq);
 }

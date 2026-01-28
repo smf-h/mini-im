@@ -140,6 +140,10 @@ public class WsAckHandler {
             return false;
         }
         String ackType = msg.getAckType();
+        if (!isDeliveredAck(ackType) && !isReadAck(ackType)) {
+            wsWriter.writeError(ctx, "unknown_ack_type", msg.getClientMsgId(), msg.getServerMsgId());
+            return false;
+        }
         if ((msg.getClientMsgId() == null || msg.getClientMsgId().isBlank())
                 && !(isDeliveredAck(ackType) || isReadAck(ackType))) {
             wsWriter.writeError(ctx, "missing_msg_id", msg.getClientMsgId(), null);
@@ -158,8 +162,7 @@ public class WsAckHandler {
             return false;
         }
         return "delivered".equalsIgnoreCase(ackType)
-                || "received".equalsIgnoreCase(ackType)
-                || "ack_receive".equalsIgnoreCase(ackType);
+                ;
     }
 
     private static boolean isReadAck(String ackType) {
@@ -177,7 +180,8 @@ public class WsAckHandler {
         private ScheduledExecutorService timer;
         private ScheduledFuture<?> future;
 
-        private final Map<String, PendingAck> pending = new HashMap<>();
+        private final Map<AckKey, PendingAck> pending = new HashMap<>();
+        private final AckKey lookupKey = new AckKey();
 
         private ScheduledExecutorService ensureTimer() {
             ScheduledExecutorService t = timer;
@@ -204,11 +208,15 @@ public class WsAckHandler {
             if (entity == null || entity.getId() == null || entity.getChatType() == null) {
                 return;
             }
+            Long msgSeq = entity.getMsgSeq();
+            if (msgSeq == null || msgSeq <= 0) {
+                return;
+            }
             if (!ackBatchProperties.batchEnabledEffective()) {
                 process(List.of(toPending(entity, ackUserId, ackType)));
                 return;
             }
-            long msgId = entity.getId();
+            long seq = msgSeq;
             ChatType chatType = entity.getChatType();
 
             Long chatId = null;
@@ -222,20 +230,22 @@ public class WsAckHandler {
             }
 
             synchronized (lock) {
-                String key = ackKey(ackUserId, ackType, chatType, chatId);
-                PendingAck p = pending.get(key);
+                lookupKey.set(ackUserId, ackType, chatType, chatId);
+                PendingAck p = pending.get(lookupKey);
                 if (p == null) {
+                    AckKey key = new AckKey();
+                    key.set(ackUserId, ackType, chatType, chatId);
                     p = new PendingAck();
                     p.ackUserId = ackUserId;
                     p.ackType = ackType;
                     p.chatType = chatType;
                     p.chatId = chatId;
-                    p.maxMsgId = msgId;
+                    p.maxMsgSeq = seq;
                     p.maxServerMsgId = entity.getServerMsgId();
                     p.senderUserId = entity.getFromUserId();
                     pending.put(key, p);
-                } else if (msgId > p.maxMsgId) {
-                    p.maxMsgId = msgId;
+                } else if (seq > p.maxMsgSeq) {
+                    p.maxMsgSeq = seq;
                     p.maxServerMsgId = entity.getServerMsgId();
                     p.senderUserId = entity.getFromUserId();
                 }
@@ -258,7 +268,8 @@ public class WsAckHandler {
             } else if (p.chatType == ChatType.GROUP) {
                 p.chatId = entity.getGroupId() == null ? 0 : entity.getGroupId();
             }
-            p.maxMsgId = entity.getId();
+            Long msgSeq = entity.getMsgSeq();
+            p.maxMsgSeq = msgSeq == null ? 0 : msgSeq;
             p.maxServerMsgId = entity.getServerMsgId();
             p.senderUserId = entity.getFromUserId();
             return p;
@@ -298,9 +309,9 @@ public class WsAckHandler {
                 }
                 if (p.chatType == ChatType.SINGLE) {
                     if (p.ackType == AckType.DELIVERED) {
-                        singleChatMemberService.markDelivered(p.chatId, p.ackUserId, p.maxMsgId);
+                        singleChatMemberService.markDelivered(p.chatId, p.ackUserId, p.maxMsgSeq);
                     } else if (p.ackType == AckType.READ) {
-                        singleChatMemberService.markRead(p.chatId, p.ackUserId, p.maxMsgId);
+                        singleChatMemberService.markRead(p.chatId, p.ackUserId, p.maxMsgSeq);
                     }
 
                     Long senderUserId = p.senderUserId;
@@ -310,6 +321,7 @@ public class WsAckHandler {
                         ack.from = p.ackUserId;
                         ack.to = senderUserId;
                         ack.serverMsgId = p.maxServerMsgId;
+                        ack.msgSeq = p.maxMsgSeq;
                         ack.ackType = p.ackType.getDesc();
                         ack.ts = Instant.now().toEpochMilli();
                         wsPushService.pushToUser(senderUserId, ack);
@@ -319,16 +331,53 @@ public class WsAckHandler {
 
                 if (p.chatType == ChatType.GROUP) {
                     if (p.ackType == AckType.DELIVERED) {
-                        groupMemberMapper.markDelivered(p.chatId, p.ackUserId, p.maxMsgId);
+                        groupMemberMapper.markDeliveredSeq(p.chatId, p.ackUserId, p.maxMsgSeq);
                     } else if (p.ackType == AckType.READ) {
-                        groupMemberMapper.markRead(p.chatId, p.ackUserId, p.maxMsgId);
+                        groupMemberMapper.markReadSeq(p.chatId, p.ackUserId, p.maxMsgSeq);
                     }
                 }
             }
         }
+    }
 
-        private String ackKey(long ackUserId, AckType ackType, ChatType chatType, long chatId) {
-            return ackUserId + "|" + (ackType == null ? "" : ackType.getDesc()) + "|" + (chatType == null ? "" : chatType.name()) + "|" + chatId;
+    private static final class AckKey {
+        private long ackUserId;
+        private AckType ackType;
+        private ChatType chatType;
+        private long chatId;
+        private int hash;
+
+        void set(long ackUserId, AckType ackType, ChatType chatType, long chatId) {
+            this.ackUserId = ackUserId;
+            this.ackType = ackType;
+            this.chatType = chatType;
+            this.chatId = chatId;
+
+            int h = 17;
+            h = 31 * h + Long.hashCode(ackUserId);
+            h = 31 * h + (ackType == null ? 0 : (ackType.ordinal() + 1));
+            h = 31 * h + (chatType == null ? 0 : (chatType.ordinal() + 1));
+            h = 31 * h + Long.hashCode(chatId);
+            this.hash = h;
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof AckKey that)) {
+                return false;
+            }
+            return ackUserId == that.ackUserId
+                    && chatId == that.chatId
+                    && ackType == that.ackType
+                    && chatType == that.chatType;
         }
     }
 
@@ -337,7 +386,7 @@ public class WsAckHandler {
         AckType ackType;
         ChatType chatType;
         long chatId;
-        long maxMsgId;
+        long maxMsgSeq;
         String maxServerMsgId;
         Long senderUserId;
     }

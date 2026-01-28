@@ -7,13 +7,6 @@
 - 非 ID 的 long/Long（例如分页 `total/size/current`）仍保持 JSON 数字类型。
 - 客户端建议：凡是语义为“ID/游标”的字段，一律按字符串处理（展示/比较/拼接），不要转 `Number(...)`。
 
-## 微信小程序端（miniprogram）
-
-- 工程目录：`miniprogram/`（原生小程序 + TypeScript，单页容器）
-- 配置：`miniprogram/config.ts`（`HTTP_BASE` / `WS_URL`）
-- HTTP：`Authorization: Bearer <accessToken>`（遇业务 `code=40100` 或 HTTP 401 自动 refresh 重试一次）
-- WS：握手 query `?token=<accessToken>`，连接后发送 `type="AUTH"` 帧；收到 `AUTH_OK` 视为在线
-
 ## HTTP API
 
 ### Auth
@@ -39,14 +32,14 @@
   - 语义：普通分页（返回 MyBatis-Plus `Page`）
 
 - 返回补充（以代码为准）：
-  - `unreadCount`：当前用户未读条数（基于 `t_single_chat_member.last_read_msg_id` 计算）
-  - `peerLastReadMsgId`：对方已读游标（用于“已读/未读”展示）
+  - `unreadCount`：当前用户未读条数（基于 `t_single_chat_member.last_read_msg_seq` 计算）
+  - `peerLastReadMsgSeq`：对方已读游标（用于“已读/未读”展示）
 
 实现位置：`com.miniim.domain.controller.SingleChatConversationController`
 
 ### Single Chat Messages（单聊消息查询）
-- `GET /single-chat/message/cursor?peerUserId=xxx&limit=20&lastId=yyy`
-  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
+- `GET /single-chat/message/cursor?peerUserId=xxx&limit=20&lastSeq=yyy`
+  - 语义：按 `msgSeq` 倒序，返回 `msgSeq < lastSeq` 的下一页；`lastSeq` 为空表示从最新开始
 - `GET /single-chat/message/list?peerUserId=xxx&pageNo=1&pageSize=20`
   - 语义：普通分页（返回 MyBatis-Plus `Page`）
 
@@ -167,16 +160,16 @@
   - 语义：按 `updatedAt` 倒序（次序：updatedAt desc, id desc），返回下一页游标
   - 约束：`lastUpdatedAt` 与 `lastId` 必须同时为空或同时存在
   - 返回补充（以代码为准）：
-    - `unreadCount`：总未读（基于 `t_group_member.last_read_msg_id` 计算）
+    - `unreadCount`：总未读（基于 `t_group_member.last_read_msg_seq` 计算）
     - `mentionUnreadCount`：@我/回复我 未读（基于稀疏索引表 `t_message_mention` 计算）
 
 实现位置：`com.miniim.domain.controller.GroupConversationController`
 
 ### Group Messages（群消息查询）
-- `GET /group/message/cursor?groupId=xxx&limit=20&lastId=yyy`
-  - 语义：按 `id` 倒序，返回 `id < lastId` 的下一页；`lastId` 为空表示从最新开始
-- `GET /group/message/since?groupId=xxx&limit=50&sinceId=zzz`
-  - 语义：按 `id` 升序，返回 `id > sinceId` 的增量；`sinceId` 为空表示从 0 开始
+- `GET /group/message/cursor?groupId=xxx&limit=20&lastSeq=yyy`
+  - 语义：按 `msgSeq` 倒序，返回 `msgSeq < lastSeq` 的下一页；`lastSeq` 为空表示从最新开始
+- `GET /group/message/since?groupId=xxx&limit=50&sinceSeq=zzz`
+  - 语义：按 `msgSeq` 升序，返回 `msgSeq > sinceSeq` 的增量；`sinceSeq` 为空表示从 0 开始
 
 实现位置：`com.miniim.domain.controller.GroupMessageController`
 
@@ -184,16 +177,16 @@
 
 ## WebSocket 送达/已读/补发（成员游标，方案B）
 
-- 服务端不再用 `t_message.status` 表达“每个用户的送达/已读”；改为推进成员维度游标：`t_single_chat_member.last_delivered_msg_id/last_read_msg_id`、`t_group_member.last_delivered_msg_id/last_read_msg_id`。
+- 服务端不再用 `t_message.status` 表达“每个用户的送达/已读”；改为推进成员维度游标：`t_single_chat_member.last_delivered_msg_seq/last_read_msg_seq`、`t_group_member.last_delivered_msg_seq/last_read_msg_seq`。
 - 接收方确认（客户端 → 服务端）：`type="ACK"` + `serverMsgId`（消息 id）
-  - 送达：`ackType="delivered"`（兼容：`ack_receive` / `received`）
+  - 送达：`ackType="delivered"`
   - 已读：`ackType="read"`（兼容：`ack_read`）
-- 离线补发：用户 `AUTH` 成功后，服务端按游标拉取 `id > last_delivered_msg_id` 的未投递区间并下发；可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）。
+- 离线补发：用户 `AUTH` 成功后，服务端按游标拉取 `msg_seq > last_delivered_msg_seq` 的未投递区间并下发；可选兜底定时补发默认关闭（`im.cron.resend.enabled=true` 才启用）。
 
 ## WebSocket
 
 - 服务端入口：`com.miniim.gateway.ws.NettyWsServer`
-- 握手鉴权：`com.miniim.gateway.ws.WsHandshakeAuthHandler`
+- 握手处理（HTTP Upgrade）：`io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler`（AUTH-first：握手阶段不鉴权）
 - 帧处理：`com.miniim.gateway.ws.WsFrameHandler`
 - 消息封装：`com.miniim.gateway.ws.WsEnvelope`
 
@@ -201,13 +194,25 @@
 
 ### 在线路由（Redis routeKey）
 - 网关实例在连接鉴权成功后，会写入 `im:gw:route:<userId> = <serverId>|<connId>`（带 TTL），用于“多实例路由定位”。
-- 同一实例内允许同一 `userId` 同时存在多个 WS 连接（例如多个浏览器标签页）；仅当该 `userId` 的最后一个连接断开时才会删除 routeKey，避免在线状态抖动。
+- `SessionRegistry` 在实现上支持同一 `userId` 在本机存在多个 channel（用于 close/写回等管理），但当前业务策略是“单端登录”：新连接鉴权成功后会关闭旧连接（包括同一设备多标签页）。
+- routeKey 删除策略：仅当本机该 `userId` 的连接集合为空时，才尝试 `deleteIfMatch(userId, connId)` 删除 routeKey（避免在线状态抖动/误删）。
 
-### 握手鉴权（客户端注意事项）
-- 非浏览器客户端：可在握手时使用 `Authorization: Bearer <accessToken>`
-- 浏览器端：WebSocket API 无法自定义握手 header，需用 query 传递：
-  - `ws://127.0.0.1:9001/ws?token=<accessToken>`（或 `accessToken=<...>`）
-- 兼容逻辑：连接建立后仍建议发送 `AUTH` 帧（便于统一触发离线补发等逻辑）
+### 单端登录（Single-Session）与踢线（KICK）
+
+> 结论：当前实现是“单端登录”，不是“多端并存”。
+
+- 同一 `userId` 新连接鉴权成功后，服务端会关闭该 `userId` 的其他 WS 连接（包括同一设备的多标签页/多窗口），仅保留最新连接。
+- 旧连接会收到：`type="ERROR", reason="kicked"`，随后断开连接。
+- 目的：避免“同账号多连接重复收消息/重复 ACK”导致投递语义与 UI 行为变复杂；MVP 阶段以单端为准。
+
+### 鉴权（AUTH-first，已实现）
+
+- WS URL：`ws://127.0.0.1:9001/ws`（URL 不携带 `token/accessToken` query）。
+- 连接建立后，客户端必须在 `3s` 内发送：`{ "type":"AUTH", "token":"<accessToken>" }`
+  - 超时未鉴权：服务端先回 `type="ERROR", reason="auth_timeout"`，随后断连
+- 未鉴权状态白名单：允许 `AUTH`、`PING`、`PONG`；其余（包含 `REAUTH`）一律 `ERROR unauthorized` 并断连
+- `AUTH_FAIL`：服务端发出 `AUTH_FAIL` 后立即断连（不按 reason 分流）
+- `REAUTH`：仅允许在已鉴权连接上使用（刷新 token 过期时间，不触发离线补发）
 
 ---
 
@@ -216,12 +221,33 @@
 ### 目标
 - 单聊/群聊/好友申请等实时链路统一走 WebSocket；HTTP 仅用于“列表展示/查询类”接口。
 
+### ACK 语义速查（按 `ackType`）
+
+> 约定：`ackType` 大小写不敏感（服务端/前端均做了兼容）；下表以“推荐小写”展示。
+
+| ackType | 方向 | 触发时机 | 必填字段（以代码为准） | 对 SSOT 的影响 | 备注 |
+|---|---|---|---|---|---|
+| `saved` | 服务端 → 发送方 | 消息/好友申请等**落库成功**后回包 | `type="ACK"`, `clientMsgId`, `serverMsgId` | **不推进 cursor**；仅表示“已持久化” | 单聊/群聊：用于发送确认与幂等收敛；ACK 里可能携带 `body`（服务端回传净化后的内容） |
+| `delivered` | 接收方 → 服务端 | 接收方收到消息帧后确认“已收到” | `type="ACK"`, `ackType`, `serverMsgId`, `to` | 推进 `last_delivered_msg_seq`（cursor SSOT） | 单聊：服务端 best-effort 回推 `ACK(delivered)`（含 `msgSeq`）给发送方用于 UI 展示 |
+| `read` | 接收方 → 服务端 | 接收方在聊天页可见/停留后确认“已读到某条” | `type="ACK"`, `ackType`, `serverMsgId`, `to` | 推进 `last_read_msg_seq`（并隐式推进 delivered） | 兼容：`ack_read`；单聊服务端 best-effort 回推 `ACK(read)`（含 `msgSeq`）给发送方用于 UI 展示 |
+| `revoked` | 服务端 → 撤回发起方 | 撤回成功后确认回包 | `type="ACK"`, `ackType="revoked"`, `serverMsgId` | 不推进 cursor | 同时会广播 `type="MESSAGE_REVOKED"` 给相关方，让在线 UI 即时更新 |
+
+### 有序性口径（发送者有序 + 最终会话有序）
+
+- **唯一排序口径：`msgSeq`**。`serverMsgId` 只作为“全局唯一 ID/锚点”（定位/撤回/幂等），不作为会话排序依据。
+- **发送者有序（当前实现的强保证）**：在“单端登录（Single-Session）”前提下，同一 `userId` 同时只有一个已鉴权连接；同一连接的入站消息在服务端按串行队列处理，因此同一发送方连续发送 `A → B` 会对应 `msgSeq(A) < msgSeq(B)`，并按序回 `ACK(saved)`。
+- **最终会话有序（最终一致）**：WS 实时推送允许 best-effort（可乱序/可缺口），客户端必须按 `msgSeq` 排序展示；发现 gap 或收到 `GROUP_NOTIFY` 时，用 `sinceSeq=<本地最大msgSeq>` 走 HTTP 增量拉取补齐，补齐后会话视图按 `msgSeq` 收敛为一致。
+- **ACK 乱序不影响最终状态**：`delivered/read` ACK 可重复/乱序；服务端按 cursor 单调推进（只前进不回退），最终以成员游标（`last_*_msg_seq`）为准。
+
 ### 消息类型
-- `AUTH`：首包鉴权（兼容旧客户端）。
+- `AUTH`：首包鉴权（AUTH-first 唯一入口）。
+- `AUTH_OK`：鉴权成功（服务端回包）。
+- `AUTH_FAIL`：鉴权失败（服务端回包，随后断开连接）。
 - `REAUTH`：续期（刷新服务端记录的 token 过期时间）。
 - `SINGLE_CHAT`：单聊发送消息（当前仅 TEXT）。
 - `GROUP_CHAT`：群聊发送消息（当前仅 TEXT；重要消息= @我/回复我）。
-- `GROUP_NOTIFY`：群聊新消息通知（不含消息体；客户端收到后走 HTTP `/group/message/since` 拉取增量）。
+- `GROUP_NOTIFY`：群聊新消息通知（不含消息体；客户端收到后走 HTTP `/group/message/since?sinceSeq=<本地最大msgSeq>` 拉取增量）。
+  - 说明：该通知是否下发取决于群聊投递策略（见下方 `GROUP_CHAT` 章节“投递策略与降级”）；极端 fanout 场景下可能会降级为“不推通知”，此时客户端需要在“打开群聊页/刷新会话列表”时通过 HTTP 对账。
 - `FRIEND_REQUEST`：发起好友申请（先落库，必要时 best-effort 推送给对方）。
 - `GROUP_JOIN_REQUEST`：有人申请入群（服务端推送给群主/管理员，best-effort）。
 - `GROUP_JOIN_DECISION`：入群申请处理结果（服务端推送给申请者，best-effort）。
@@ -239,6 +265,72 @@
 
 通用约定：
 - 服务端会对 `body`/`message` 做违禁词替换（命中则替换为 `***`），不改变消息语义字段（type/to/groupId 等）。
+
+### WS 鉴权/会话失效（单端登录口径）
+
+- `AUTH`（客户端 → 服务端）：首包鉴权（AUTH-first 唯一入口）。
+  - 必填：`type="AUTH"`、`token`
+  - 成功：`type="AUTH_OK"`（服务端绑定身份，并触发离线补发等逻辑）
+  - 失败：`type="AUTH_FAIL"`, `reason=missing_token|invalid_token|session_invalid`，随后断开连接
+- `REAUTH`（客户端 → 服务端）：续期（刷新服务端记录的 token 过期时间，不触发离线补发）。
+  - 常见失败：`ERROR reason=reauth_uid_mismatch|session_invalid|unauthorized`（失败时会断开连接）
+- 已在线期间 token 失效：
+  - 心跳/空闲保活可能回 `ERROR reason=token_expired|session_invalid` 并断开连接
+- 单端踢线：
+  - 同账号在别处建立新连接并鉴权成功后，旧连接会收到 `ERROR reason=kicked` 并断开
+
+### WS 错误码总表（`AUTH_FAIL` vs `ERROR`）
+
+#### 边界（什么时候用 `AUTH_FAIL`，什么时候用 `ERROR`）
+
+- `AUTH_FAIL`：只用于 `type="AUTH"` 鉴权失败（服务端会立即断开连接）。
+- `ERROR`：除 `AUTH_FAIL` 以外的所有错误回包（业务校验/限流/会话失效/踢线/协议违规等）。是否断开连接取决于错误类型（见下表）。
+- AUTH-first：握手阶段不鉴权，不存在“token 导致的握手 401”；token 相关错误统一通过 WS `AUTH_FAIL` 返回，且 `3s` 内未完成 `AUTH` 会触发 `ERROR auth_timeout` 并断连。
+
+#### `AUTH_FAIL`（WS 帧鉴权失败）
+
+| 场景 | 返回 | reason | 是否断连 | 客户端建议 |
+|---|---|---|---|---|
+| 未传 token | `type="AUTH_FAIL"` | `missing_token` | 是 | 修复接入：确保 `AUTH.token` 有值 |
+| token 无效/不可解析 | `type="AUTH_FAIL"` | `invalid_token` | 是 | 清理本地 token，重新登录 |
+| token 已失效（sv 不一致） | `type="AUTH_FAIL"` | `session_invalid` | 是 | 清理本地 token，提示“会话已失效”，跳转登录 |
+
+#### `ERROR`（通用错误回包）
+
+> 说明：服务端会尽量回传 `clientMsgId/serverMsgId` 方便前端定位请求；是否断连以当前实现为准（代码里多处会主动 `close()`）。
+
+| reason | 常见触发 | 是否断连 | 客户端统一处理策略（建议） |
+|---|---|---|---|
+| `kicked` | 单端登录：同账号新连接鉴权成功后踢旧连接 | 是 | 清 token → toast “账号在另一处登录” → 跳转登录页 |
+| `session_invalid` | 在线期间检测到 sv 失效（心跳/REAUTH/网关门禁复验等） | 是 | 清 token → 跳转登录页（避免无限重连） |
+| `token_expired` | 在线期间 accessToken 到期（心跳/门禁） | 是 | 先走 refresh（如有）获取新 token，否则清 token → 跳转登录 |
+| `unauthorized` | 未鉴权/鉴权丢失的连接发送业务消息（或 `REAUTH` 在未绑定 uid 时） | 是（通常） | 直接断开并引导重新鉴权/重连；若无 token 则跳登录 |
+| `auth_timeout` | 连接建立后 `3s` 内未完成 `AUTH` | 是 | 视为接入错误或弱网异常：重连后立即发 `AUTH`；若无 token 则跳登录 |
+| `reauth_uid_mismatch` | `REAUTH` 的 token.uid 与当前连接绑定 uid 不一致 | 是 | 视为会话异常：清 token → 跳登录 |
+| `too_many_requests` | 网关限流（连接级/用户级）触发 | 是 | 断开后指数退避重连；并在前端做发送节流/合并 ACK |
+| `bad_json` | 收到无法解析的 JSON | 可能（短窗累计触发） | 视为客户端 bug：停止发送，打印原始包与版本信息，必要时重连 |
+| `missing_type` | WS 包缺 `type` | 可能（短窗累计触发） | 同上（协议/客户端 bug） |
+| `not_implemented` | 未支持的 `type` | 可能（短窗累计触发） | 同上（版本不一致/协议不匹配） |
+| `server_busy` | 网关队列/线程池拥塞（例如 inbound queue 拒绝） | 否 | 标记该 `clientMsgId` 失败；稍后重试（保持 `clientMsgId` 不变以便幂等） |
+| `internal_error` | 服务端内部异常/超时 | 否（多数业务路径） | 标记失败并允许重试；必要时提示“服务端繁忙，请稍后重试” |
+| `missing_msg_id` / `missing_to` / `missing_group_id` / `missing_body` | 请求缺字段 | 否 | 直接提示用户/修复请求构造，不要自动重试 |
+| `body_too_long` | 文本过长（单聊/群聊/好友申请各自限制） | 否 | 提示用户缩短内容或拆分发送 |
+| `cannot_send_to_self` | 给自己发单聊/好友申请 | 否 | 提示用户修正目标 |
+| `missing_ack_type` / `unknown_ack_type` | ACK 缺字段/ackType 不认识 | 否 | 修复客户端实现（ackType 仅支持 delivered/read 等） |
+| `missing_server_msg_id` / `bad_server_msg_id` | serverMsgId 缺失/非法（ACK/撤回等） | 否 | 修复客户端实现；一般不应自动重试 |
+| `message_not_found` | ACK/撤回指向的消息不存在 | 否 | 视为状态不同步：触发拉取对账或忽略该操作 |
+| `ack_not_allowed` | ACK 权限不匹配（例如对不属于自己的消息 ACK） | 否 | 视为客户端 bug 或越权：停止该行为并上报 |
+
+#### 前端统一处理（推荐实现口径）
+
+- **需要立刻退出登录态的错误（统一一条路径处理）：**
+  - `AUTH_FAIL: invalid_token/session_invalid`
+  - `ERROR: session_invalid/token_expired/unauthorized/kicked/reauth_uid_mismatch`
+  - 行为：关闭 WS → 清理 token → 跳转登录页（并 toast 提示原因）
+- **可重试类：**`ERROR server_busy/internal_error/too_many_requests`
+  - 行为：对发送类请求保持 `clientMsgId` 不变做幂等重试；对连接级限流走指数退避重连
+- **不可重试（用户输入/协议问题）：**缺字段/超长/未实现/ACK 参数错误等
+  - 行为：提示用户或打点上报，避免自动重试刷爆
 
 ### SINGLE_CHAT（客户端 → 服务端）
 - 必填字段：
@@ -290,14 +382,41 @@
   - `important=true`：该条消息对“当前接收方”是否重要（@我/回复我）；非重要时该字段为空
 
 
-### ACK_RECEIVED（接收方 → 服务端）
-- 用途：接收方确认“已收到消息”，服务端据此更新数据库消息状态（`RECEIVED`）。
-- 当前实现必填字段（以代码为准）：
+### 投递策略与降级（推消息体 vs 通知后拉取 vs 不推）
+
+> 目标：群聊 fanout 场景下控制写放大；实时推送只是加速，最终以 DB 拉取/补发为准。
+
+当前实现支持 3 种策略（配置：`im.group-chat.strategy.mode`）：
+
+- `push`：推消息体（在线端会直接收到 `GROUP_CHAT`）
+- `notify`：通知后拉取（在线端收到 `GROUP_NOTIFY`，客户端再调用 `GET /group/message/since` 拉取增量）
+- `none`：不推（不推 `GROUP_CHAT/GROUP_NOTIFY`，客户端靠“打开群聊页/刷新列表/离线补发”兜底）
+- `auto`（默认）：按阈值自动选择 `push/notify`，并在极端场景下跳过 notify
+
+自动策略阈值（默认值见 `application.yml`）：
+
+- `group-size-threshold=2000`：群成员数达到阈值时优先 `notify`
+- `online-user-threshold=500`：在线人数达到阈值时优先 `notify`
+- `notify-max-online-user=2000`：在线人数过多时**不推 notify**（降级为 `none`）
+- `huge-group-no-notify-size=10000`：超大群直接**不推 notify**（降级为 `none`）
+
+客户端接入约定：
+
+- 收到 `GROUP_CHAT`：正常展示 + 去重（按 `serverMsgId`）+ 回 `ACK(delivered/read)`
+- 收到 `GROUP_NOTIFY`：以 `msgSeq` 作为“最新消息提示”，调用 `GET /group/message/since?sinceSeq=<本地最大msgSeq>` 拉取增量（可忽略提示值，仅作为“是否需要拉取”的 hint）
+- 若长时间收不到 `GROUP_CHAT/GROUP_NOTIFY`：不代表无新消息；应在“打开群聊页/刷新会话列表”时走 HTTP 拉取对账
+
+### DELIVERED/READ（接收方 → 服务端，推进 cursor）
+
+- 用途：推进成员游标（cursor），用于“离线补发/已读展示/最终状态”。
+- 必填字段（以代码为准）：
   - `type="ACK"`
-  - `ackType="ack_receive"`（兼容：`received`）
-  - `clientMsgId`（发送方的 clientMsgId，来自服务端下发 `SINGLE_CHAT.clientMsgId`）
-  - `to`：原发送方 userId
-  - `serverMsgId`：服务端消息 id（建议必填，便于精确更新）
+  - `ackType="delivered"` 或 `ackType="read"`
+    - 兼容：`ack_read` 视为 `read`
+  - `serverMsgId`：被确认的消息 id（服务端消息 id）
+  - `to`：原发送方 userId（当前实现要求必填；实际校验以 `serverMsgId` 解析出的 message 为准）
+- 说明：
+  - ACK 可重复/乱序；服务端按 cursor 单调递增处理（只前进不回退）。
 
 ### 幂等与重试（发送方）
 - 发送方以“收到 `ACK(SAVED)`”作为服务端落库确认；未收到则客户端按 `clientMsgId` 重发。
@@ -307,7 +426,7 @@
 
 ### 单聊已读/未读（HTTP）
 - `GET /single-chat/member/state?peerUserId=xxx`
-  - 返回：`singleChatId`、`myLastReadMsgId`、`peerLastReadMsgId`
+  - 返回：`singleChatId`、`myLastReadMsgSeq`、`peerLastReadMsgSeq`
   - 用途：前端在单聊页面展示“已读/未读”，并可用于调试
 
 ### 会话免打扰（DND）（HTTP）
@@ -376,16 +495,12 @@
 ### 推送（服务端 → 被申请方）
 - 如果被申请方在线：服务端会 best-effort 推送一次 `type="FRIEND_REQUEST"`（不保证送达、不重试）。
 
-### 离线与补发
-- 基本原则：未收到 `ACK_RECEIVED` 视为投递失败；由定时任务兜底重发。
-- 状态建议：
-  - `SAVED`：已落库待确认
-  - `DROPPED`：离线/待补发
-  - `RECEIVED`：已收到（业务最终态）
+### 离线与补拉（HTTP）
+- `FRIEND_REQUEST` 的 WS 推送是 best-effort：对方离线时不保证实时送达。
+- 对方登录/刷新后应通过 HTTP 列表接口拉取申请记录（`GET /friend/request/cursor` 或 `GET /friend/request/list`），并在列表页上 `POST /friend/request/decide` 处理。
 
 ### ⚠️ 当前实现备注（以代码为准）
-- 定时补发当前扫描 `status=SAVED` 且 `updatedAt` 超时的消息；投递失败（对端不在线）时会把消息置为 `DROPPED`。
-- `ACK_RECEIVED` 的数据库更新逻辑依赖 `clientMsgId/serverMsgId/from/to` 多条件；如客户端字段缺失可能导致 0 行更新（建议长期演进为“以 `serverMsgId` 为主键定位 + to_user_id 校验”）。
+- `FRIEND_REQUEST` 的实时推送为 best-effort，不做 WS 重试/补发；最终以 DB 列表查询结果为准。
 
 ---
 

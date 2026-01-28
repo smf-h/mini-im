@@ -74,12 +74,12 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
     }
 
     @Override
-    public void markDelivered(long singleChatId, long userId, long msgId) {
-        if (singleChatId <= 0 || userId <= 0 || msgId <= 0) {
+    public void markDelivered(long singleChatId, long userId, long msgSeq) {
+        if (singleChatId <= 0 || userId <= 0 || msgSeq <= 0) {
             return;
         }
 
-        int updated = this.getBaseMapper().markDelivered(singleChatId, userId, msgId);
+        int updated = this.getBaseMapper().markDeliveredSeq(singleChatId, userId, msgSeq);
         if (updated > 0) {
             return;
         }
@@ -94,16 +94,16 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
         }
 
         ensureMember(singleChatId, userId);
-        this.getBaseMapper().markDelivered(singleChatId, userId, msgId);
+        this.getBaseMapper().markDeliveredSeq(singleChatId, userId, msgSeq);
     }
 
     @Override
-    public void markRead(long singleChatId, long userId, long msgId) {
-        if (singleChatId <= 0 || userId <= 0 || msgId <= 0) {
+    public void markRead(long singleChatId, long userId, long msgSeq) {
+        if (singleChatId <= 0 || userId <= 0 || msgSeq <= 0) {
             return;
         }
 
-        int updated = this.getBaseMapper().markRead(singleChatId, userId, msgId);
+        int updated = this.getBaseMapper().markReadSeq(singleChatId, userId, msgSeq);
         if (updated > 0) {
             return;
         }
@@ -117,7 +117,7 @@ public class SingleChatMemberServiceImpl extends ServiceImpl<SingleChatMemberMap
         }
 
         ensureMember(singleChatId, userId);
-        this.getBaseMapper().markRead(singleChatId, userId, msgId);
+        this.getBaseMapper().markReadSeq(singleChatId, userId, msgSeq);
     }
 }
 

@@ -2,7 +2,6 @@ package com.miniim.gateway.ws;
 
 import com.miniim.gateway.config.GroupChatStrategyProperties;
 import com.miniim.gateway.config.GroupFanoutProperties;
-import com.miniim.gateway.config.WsPerfTraceProperties;
 import com.miniim.gateway.session.WsRouteStore;
 import com.miniim.gateway.ws.cluster.WsClusterBus;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +38,6 @@ public class GroupChatDispatchService {
     private final WsPushService wsPushService;
     private final GroupFanoutProperties fanoutProps;
     private final GroupChatStrategyProperties strategyProps;
-    private final WsPerfTraceProperties perfTraceProps;
 
     public void dispatch(Set<Long> memberIds,
                          long fromUserId,
@@ -66,7 +64,6 @@ public class GroupChatDispatchService {
         if (!fanoutProps.isEnabled()) {
             // 兼容关闭开关时的退化行为：逐成员 push（仍会命中 per-user route 查找）
             legacyPush(memberIds, fromUserId, importantTargets, mode == Mode.NOTIFY ? normalNotify : normalMessage, mode == Mode.NOTIFY ? importantNotify : importantMessage);
-            maybeLogPerf(startNs, true, fromUserId, mode, groupSize, 0, 0L, 0L);
             return;
         }
 
@@ -77,7 +74,6 @@ public class GroupChatDispatchService {
             if (fanoutProps.isFailOpen()) {
                 legacyPush(memberIds, fromUserId, importantTargets, mode == Mode.NOTIFY ? normalNotify : normalMessage, mode == Mode.NOTIFY ? importantNotify : importantMessage);
             }
-            maybeLogPerf(startNs, false, fromUserId, mode, groupSize, 0, routeNs, 0L);
             return;
         }
 
@@ -105,13 +101,11 @@ public class GroupChatDispatchService {
             fanoutByServer(routing.normalByServer, normalMessage);
             fanoutByServer(routing.importantByServer, importantMessage);
             long fanoutNs = System.nanoTime() - fanoutStartNs;
-            maybeLogPerf(startNs, true, fromUserId, mode, groupSize, onlineUserCount, routeNs, fanoutNs);
         } else if (mode == Mode.NOTIFY) {
             long fanoutStartNs = System.nanoTime();
             fanoutByServer(routing.normalByServer, normalNotify);
             fanoutByServer(routing.importantByServer, importantNotify);
             long fanoutNs = System.nanoTime() - fanoutStartNs;
-            maybeLogPerf(startNs, true, fromUserId, mode, groupSize, onlineUserCount, routeNs, fanoutNs);
         }
     }
 
@@ -210,31 +204,6 @@ public class GroupChatDispatchService {
             target.computeIfAbsent(info.serverId(), k -> new ArrayList<>()).add(uid);
         }
         return BatchOut.ok(online);
-    }
-
-    private void maybeLogPerf(long startNs,
-                              boolean ok,
-                              long fromUserId,
-                              Mode mode,
-                              int groupSize,
-                              int onlineUserCount,
-                              long routeNs,
-                              long fanoutNs) {
-        if (perfTraceProps == null || !perfTraceProps.enabledEffective()) {
-            return;
-        }
-        long totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-        long slowMs = perfTraceProps.slowMsEffective();
-        double sampleRate = perfTraceProps.sampleRateEffective();
-        boolean sampled = sampleRate > 0 && ThreadLocalRandom.current().nextDouble() < sampleRate;
-        if (totalMs < slowMs && !sampled) {
-            return;
-        }
-        log.info("ws_perf group_dispatch ok={} from={} mode={} groupSize={} online={} totalMs={} routeMs={} fanoutMs={}",
-                ok, fromUserId, mode, groupSize, onlineUserCount,
-                totalMs,
-                TimeUnit.NANOSECONDS.toMillis(routeNs),
-                TimeUnit.NANOSECONDS.toMillis(fanoutNs));
     }
 
     private static int safePositive(int v, int fallback) {

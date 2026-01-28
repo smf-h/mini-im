@@ -7,6 +7,7 @@ export type ResultEnvelope<T> = {
 }
 
 export type Id = string
+export type MsgSeq = string
 
 export type LoginResponse = {
   userId: Id
@@ -48,8 +49,8 @@ export type SingleChatConversationDto = {
   peerUserId: Id
   updatedAt: string
   unreadCount?: number
-  myLastReadMsgId?: Id | null
-  peerLastReadMsgId?: Id | null
+  myLastReadMsgSeq?: MsgSeq | null
+  peerLastReadMsgSeq?: MsgSeq | null
   lastMessage?: {
     serverMsgId: string
     fromUserId: Id
@@ -62,8 +63,8 @@ export type SingleChatConversationDto = {
 export type SingleChatMemberStateDto = {
   singleChatId?: Id | null
   peerUserId: Id
-  myLastReadMsgId?: Id | null
-  peerLastReadMsgId?: Id | null
+  myLastReadMsgSeq?: MsgSeq | null
+  peerLastReadMsgSeq?: MsgSeq | null
 }
 
 export type GroupConversationDto = {
@@ -208,6 +209,7 @@ export type ResetGroupCodeResponse = {
 
 export type MessageEntity = {
   id: Id
+  msgSeq?: MsgSeq | null
   chatType: number
   singleChatId: Id | null
   groupId: Id | null

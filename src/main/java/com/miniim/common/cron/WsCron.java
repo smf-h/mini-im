@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 可选兜底补发：基于“成员游标(last_delivered_msg_id)”拉取未投递区间。
+ * 可选兜底补发：基于“成员游标(last_delivered_msg_seq)”拉取未投递区间。
  *
  * <p>默认关闭，避免开发/调试阶段产生重复投递与日志噪声。</p>
  */

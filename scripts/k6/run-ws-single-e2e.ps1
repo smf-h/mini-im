@@ -13,6 +13,27 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Resolve-K6Exe() {
+  try {
+    $cmd = Get-Command k6 -ErrorAction Stop
+    if ($cmd -and $cmd.Path) { return $cmd.Path }
+  } catch {
+    # ignore
+  }
+
+  $candidates = @(
+    "C:\\Program Files\\k6\\k6.exe",
+    "C:\\Program Files (x86)\\k6\\k6.exe"
+  )
+  foreach ($c in $candidates) {
+    if (Test-Path -LiteralPath $c) { return $c }
+  }
+
+  return "k6"
+}
+
+$k6Exe = Resolve-K6Exe
+
 $env:WS_URLS = $WsUrls
 $env:JWT_SECRET = $JwtSecret
 $env:JWT_ISSUER = $JwtIssuer
@@ -23,5 +44,4 @@ $env:MSG_INTERVAL_MS = "$MsgIntervalMs"
 $env:WARMUP_MS = "$WarmupMs"
 $env:ROLE_PINNED = $(if ($RolePinned) { "1" } else { "0" })
 
-k6 run ".\\scripts\\k6\\ws_single_e2e.js" --vus $Vus --duration $Duration
-
+& $k6Exe run ".\\scripts\\k6\\ws_single_e2e.js" --vus $Vus --duration $Duration

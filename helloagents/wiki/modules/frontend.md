@@ -10,6 +10,7 @@
 - 入口与路由：`frontend/src/router.ts`
 - 全局布局（Sidebar Layout）：`frontend/src/components/AppLayout.vue`（Sidebar + 主内容区 + toast）
 - 登录与 token 存储：`frontend/src/stores/auth.ts`
+- HTTP 请求封装：`frontend/src/services/api.ts`（401/业务 40100 会清理登录态并回到登录页）
 - WebSocket 管理：`frontend/src/stores/ws.ts`
 - 用户基础信息缓存：`frontend/src/stores/users.ts`
 - 站内通知（toast）：`frontend/src/stores/notify.ts` + `frontend/src/components/AppLayout.vue`

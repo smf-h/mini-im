@@ -22,7 +22,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * WS 离线/兜底补发：按“成员游标(last_delivered_msg_id)”拉取未投递区间并下发。
+ * WS 离线/兜底补发：按“成员游标(last_delivered_msg_seq)”拉取未投递区间并下发。
  *
  * <p>注意：写入必须切回 Netty eventLoop；DB 查询可在业务线程执行。</p>
  */
@@ -126,6 +126,7 @@ public class WsResendService {
         envelope.setTo(userId);
         envelope.setGroupId(msgEntity.getGroupId());
         envelope.setServerMsgId(msgEntity.getServerMsgId());
+        envelope.setMsgSeq(msgEntity.getMsgSeq());
         envelope.setBody(msgEntity.getStatus() == com.miniim.domain.enums.MessageStatus.REVOKED
                 ? MessageEntity.REVOKED_PLACEHOLDER
                 : msgEntity.getContent());

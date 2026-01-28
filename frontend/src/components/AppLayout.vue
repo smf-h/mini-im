@@ -25,6 +25,12 @@ const router = useRouter()
 
 const showLayout = computed(() => auth.isLoggedIn && route.path !== '/login')
 
+const meName = computed(() => {
+  if (!auth.userId) return ''
+  const name = users.displayName(auth.userId)
+  return name || auth.userId
+})
+
 const wsBadge = computed(() => {
   if (!ws.connected) return '离线'
   if (!ws.authed) return '已连(未鉴权)'
@@ -345,8 +351,8 @@ onUnmounted(() => {
           </button>
           <div v-if="showMeMenu" class="meMenu" role="menu">
             <div class="meMeta">
-              <div class="meTitle">uid={{ auth.userId }}</div>
-              <div class="meSub">WS: {{ wsBadge }}</div>
+              <div class="meTitle">{{ meName }}</div>
+              <div class="meSub">{{ wsBadge }}</div>
             </div>
             <div class="meActions">
               <button class="menuBtn" type="button" @click="go(`/contacts/u/${auth.userId}`)">个人主页</button>

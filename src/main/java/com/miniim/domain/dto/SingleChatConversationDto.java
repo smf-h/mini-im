@@ -16,9 +16,9 @@ public class SingleChatConversationDto {
 
     private Long unreadCount;
 
-    private Long myLastReadMsgId;
+    private Long myLastReadMsgSeq;
 
-    private Long peerLastReadMsgId;
+    private Long peerLastReadMsgSeq;
 
     /** 最后一条消息（无消息时为 null） */
     private LastMessageDto lastMessage;

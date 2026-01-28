@@ -67,6 +67,11 @@
 | 202601150002 | 单聊 DB 减负（ensureMembers 去热路径） | 优化 | ?已完成 | helloagents/history/2026-01/202601150002_singlechat_ensure_members_db_relief/ |
 | 202601151243 | 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams） | 优化 | ?已完成 | helloagents/history/2026-01/202601151243_ws_singlechat_two_phase_ack/ |
 | 202601171836 | 全链路性能顶尖化（Redis down 可控退化 + 压测口径/脚本完善） | 优化 | ?已完成 | helloagents/history/2026-01/202601171836_perf_top_hardware/ |
+| 202601202143 | 移除微信小程序端（miniprogram） | 维护 | ?已完成 | helloagents/history/2026-01/202601202143_remove_miniprogram/ |
+| 202601202241 | WS 投递 SSOT（一页纸：DB vs Redis）+ 历史注释对齐 | 文档 | ?已完成 | helloagents/history/2026-01/202601202241_ws_ssot_align/ |
+| 202601202246 | 弃用 t_message_ack（仅保留表）+ 审计/统计口径澄清 | 文档 | ?已完成 | helloagents/history/2026-01/202601202246_deprecate_message_ack/ |
+| 202601202312 | 补齐仓库 README（可演示/可验收） | 文档 | ?已完成 | helloagents/history/2026-01/202601202312_readme_demo_acceptance/ |
+| 202601221210 | Web UI 微调（好友申请箭头/去调试信息/未登录回登录） | 修复 | ?已完成 | helloagents/history/2026-01/202601221210_web_ui_polish_auth_redirect/ |
 
 ---
 
@@ -108,6 +113,11 @@
 - 202601150002_singlechat_ensure_members_db_relief - 单聊 DB 减负（ensureMembers 去热路径）
 - 202601151243_ws_singlechat_two_phase_ack - 单聊“两级回执”（ACK accepted/saved）+ 异步落库/投递（Redis Streams）
 - 202601171836_perf_top_hardware - 全链路性能顶尖化（Redis down 可控退化 + 压测口径/脚本完善）
+- 202601202143_remove_miniprogram - 移除微信小程序端（miniprogram）
+- 202601202241_ws_ssot_align - WS 投递 SSOT（一页纸：DB vs Redis）+ 历史注释对齐
+- 202601202246_deprecate_message_ack - 弃用 t_message_ack（仅保留表）+ 审计/统计口径澄清
+- 202601202312_readme_demo_acceptance - 补齐仓库 README（可演示/可验收）
+- 202601221210_web_ui_polish_auth_redirect - Web UI 微调（好友申请箭头/去调试信息/未登录回登录）
 
 ### 2025-12
 

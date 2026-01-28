@@ -34,4 +34,3 @@ class WsRouteStoreTest {
         assertEquals("s|c", WsRouteStore.format("s", "c"));
     }
 }
-

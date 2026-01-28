@@ -9,6 +9,7 @@
 - 自动填充：`com.miniim.config.MyMetaObjectHandler`
 - 线程池：`com.miniim.config.ImExecutorsConfig`
 - 数据库迁移（Flyway）：`src/main/resources/db/migration/*` + `spring.flyway.*`（见 `src/main/resources/application.yml`）
+  - 启动自愈：`im.flyway.auto-repair`（默认 true；设置为 false 可关闭）。当 `flyway.validate` 失败时自动 `repair()` 并重试迁移，实现见 `com.miniim.config.FlywayAutoRepairConfig`
 - 码生成配置（FriendCode/GroupCode）：`im.code.*`（见 `src/main/resources/application.yml`、`src/main/java/com/miniim/domain/config/CodeProperties.java`）
 - 缓存配置：`im.cache.*`（见 `src/main/resources/application.yml`、`com.miniim.common.cache.CacheProperties`）
 - 限流配置：`im.ratelimit.*`（见 `src/main/resources/application.yml`、`com.miniim.common.ratelimit.RateLimitProperties`）

@@ -45,12 +45,6 @@ public class WsAuthHandler {
         if (sessionRegistry.isAuthed(ch)) {
             Long uid = ch.attr(SessionRegistry.ATTR_USER_ID).get();
             wsWriter.write(ctx, authOk(uid == null ? -1 : uid));
-            if (uid != null) {
-                afterAuthed(uid, ch, "auth_already_authed");
-            }
-            if (uid != null && resendProperties.afterAuthEnabledEffective() && markResendAfterAuthOnce(ch)) {
-                wsResendService.resendForChannelAsync(ch, uid, "auth_already_authed");
-            }
             return;
         }
 

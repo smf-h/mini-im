@@ -29,9 +29,9 @@ import javax.crypto.spec.SecretKeySpec;
  * 你的单聊可靠性链路依赖多个环节协同：
  * <ul>
  *   <li>发件人 -> 服务端：服务端落库成功后回 ACK(saved)</li>
- *   <li>服务端 -> 收件人：收件人收到消息后回 ACK(ack_receive/received)</li>
- *   <li>服务端：收到 ACK_RECEIVED 后推进 DB 状态到 RECEIVED</li>
- *   <li>离线：收件人不在线时落库为 DROPPED；收件人上线后拉取/补发并再次走 ACK_RECEIVED</li>
+ *   <li>服务端 -> 收件人：收件人收到消息后回 ACK(delivered)</li>
+ *   <li>服务端：收到 delivered/read 后推进成员游标（cursor），用于离线补发与已读展示</li>
+ *   <li>离线：收件人上线后服务端按 cursor 补发；收件人收到后再回 ACK 推进 cursor</li>
  * </ul>
  * 这个脚本把这些关键路径跑一遍，并将每一步的“预期与失败原因”都体现在输出 JSON 里。
  *
@@ -92,11 +92,10 @@ public class WsSmokeTest {
         explain.put("auth.handshake", "WS handshake validates accessToken (Authorization/query); failures are 401 missing_access_token/invalid_access_token");
         explain.put("auth.frame", "WS AUTH/REAUTH frame binds session or refreshes expMs; AUTH_OK means token parsed and session bound/refreshed");
         explain.put("ackType.saved", "服务端确认消息已落库（写库成功），发件人可认为“已保存”，可用于重发幂等");
-        explain.put("ackType.ack_receive/received", "收件人确认“已收到消息帧”，服务端可推进消息状态到 RECEIVED");
+        explain.put("ackType.delivered", "收件人确认“已收到消息帧”，服务端推进 delivered cursor（成员游标）");
         explain.put("wsFrame.ERROR", "协议/鉴权/参数错误等，reason 字段给出原因（unauthorized/token_expired/...)");
-        explain.put("dbStatus.1", "SAVED：已落库（等待投递/等待收件人 ACK_RECEIVED）");
-        explain.put("dbStatus.5", "RECEIVED：已收到收件人 ACK_RECEIVED");
-        explain.put("dbStatus.6", "DROPPED：收件人离线（或投递兜底失败），等待上线补发/再投递");
+        explain.put("dbStatus.1", "SAVED：已落库（消息本体状态；送达/已读最终态以成员游标为准）");
+        explain.put("dbStatus.4", "REVOKED：已撤回（消息本体状态）");
         explain.put("friendRequest.status.0", "PENDING：好友申请已落库，等待对方处理");
         out.put("explain", explain);
 
@@ -145,13 +144,12 @@ public class WsSmokeTest {
      * 场景 1：基础链路
      * 目标：
      * - A -> 服务端：拿到 ACK(saved)（证明落库成功）
-     * - B 收到消息后回 ACK(ack_receive)
-     * - 服务端应推进消息状态为 RECEIVED（DB 校验在 PowerShell 脚本里做）
+     * - B 收到消息后回 ACK(delivered) 推进成员游标
      */
     private static Map<String, Object> scenarioBasic(String tokenA, String tokenB) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("ok", false);
-        r.put("why", "验证单聊基础 ACK 链路：ACK(saved) + ACK_RECEIVED");
+        r.put("why", "验证单聊基础 ACK 链路：ACK(saved) + ACK(delivered)");
         List<Map<String, Object>> steps = new ArrayList<>();
         r.put("steps", steps);
 
@@ -182,7 +180,7 @@ public class WsSmokeTest {
             steps.add(step("S->B", "SINGLE_CHAT deliver", delivered));
 
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
-            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            steps.add(step("B->S", "ACK(delivered)", ackReceiveJson));
             sendText(wsB, ackReceiveJson);
 
             // 给服务端异步 DB 更新一点时间（服务端用 dbExecutor）
@@ -191,7 +189,7 @@ public class WsSmokeTest {
             r.put("ok", true);
             r.put("clientMsgId", clientMsgId);
             r.put("serverMsgId", serverMsgId);
-            r.put("expected", "A收到ACK(saved); B收到消息并回ACK(ack_receive); DB状态应变为RECEIVED(5)");
+            r.put("expected", "A收到ACK(saved); B收到消息并回ACK(delivered)推进成员游标（cursor）");
             return r;
         } catch (Exception e) {
             r.put("reason", "常见原因：WS鉴权失败(jwtSecret/iat/exp不一致)、服务端未启动、协议字段缺失、超时未收到ACK等");
@@ -260,7 +258,7 @@ public class WsSmokeTest {
             steps.add(step("S->B", "SINGLE_CHAT deliver", delivered));
 
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId1, USER_A);
-            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            steps.add(step("B->S", "ACK(delivered)", ackReceiveJson));
             sendText(wsB, ackReceiveJson);
             Thread.sleep(300);
 
@@ -327,9 +325,9 @@ public class WsSmokeTest {
                 String delivered = await(listenerB.queue, TIMEOUT_MS, isSingleChat(clientMsgId, serverMsgId));
                 steps.add(step("S->B", "SINGLE_CHAT resend (from DROPPED)", delivered));
 
-                // 收件人确认收到：回 ACK_RECEIVED（ack_receive）
+                // 收件人确认收到：回 ACK(delivered)
                 String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
-                steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+                steps.add(step("B->S", "ACK(delivered)", ackReceiveJson));
                 sendText(wsB, ackReceiveJson);
                 Thread.sleep(800);
 
@@ -405,7 +403,7 @@ public class WsSmokeTest {
 
             // 收到补发后再回 ACK_RECEIVED
             String ackReceiveJson = ackReceiveJson(clientMsgId, serverMsgId, USER_A);
-            steps.add(step("B->S", "ACK(ack_receive)", ackReceiveJson));
+            steps.add(step("B->S", "ACK(delivered)", ackReceiveJson));
             sendText(wsB, ackReceiveJson);
             Thread.sleep(800);
 
@@ -671,10 +669,9 @@ public class WsSmokeTest {
     }
 
     private static WebSocket connectWithQueryToken(HttpClient httpClient, String token, QueueListener listener, long timeoutMs) {
-        String sep = WS_URL.contains("?") ? "&" : "?";
-        String url = WS_URL + sep + "token=" + urlEncode(token);
+        // AUTH-first：握手阶段不再做鉴权；token 只在首包 AUTH 里传。
         return httpClient.newWebSocketBuilder()
-                .buildAsync(URI.create(url), listener)
+                .buildAsync(URI.create(WS_URL), listener)
                 .orTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .join();
     }
@@ -754,13 +751,13 @@ public class WsSmokeTest {
     }
 
     private static String ackReceiveJson(String clientMsgId, String serverMsgId, long toUserId) {
-        // ackType 支持 received / ack_receive（服务端做了 ignoreCase）
+        // 服务端仅接受 delivered/read（以及 ack_read 兼容）；此处发送 delivered
         return jsonObj(
                 "type", "ACK",
                 "clientMsgId", clientMsgId,
                 "serverMsgId", serverMsgId,
                 "to", String.valueOf(toUserId),
-                "ackType", "ack_receive",
+                "ackType", "delivered",
                 "ts", String.valueOf(Instant.now().toEpochMilli())
         );
     }

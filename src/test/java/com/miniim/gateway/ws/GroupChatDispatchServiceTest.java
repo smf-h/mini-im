@@ -54,7 +54,7 @@ class GroupChatDispatchServiceTest {
             return out;
         });
 
-        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps, null);
+        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps);
 
         Set<Long> members = Set.of(1L, 2L, 3L);
         WsEnvelope normalMsg = new WsEnvelope();
@@ -90,7 +90,7 @@ class GroupChatDispatchServiceTest {
         strategyProps.setMode("auto");
         strategyProps.setHugeGroupNoNotifySize(2);
 
-        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps, null);
+        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps);
 
         Set<Long> members = new HashSet<>();
         members.add(1L);
@@ -133,7 +133,7 @@ class GroupChatDispatchServiceTest {
         when(routeStore.serverId()).thenReturn("local");
         when(routeStore.batchGet(anyList())).thenReturn(null);
 
-        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps, null);
+        GroupChatDispatchService svc = new GroupChatDispatchService(routeStore, clusterBus, pushService, fanoutProps, strategyProps);
 
         WsEnvelope normalMsg = new WsEnvelope();
         normalMsg.type = "GROUP_CHAT";

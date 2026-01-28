@@ -16,6 +16,7 @@ import UiAvatar from '../components/UiAvatar.vue'
 type UiMessage = {
   clientMsgId: string
   serverMsgId?: string
+  msgSeq?: bigint | null
   fromUserId: string
   content: string
   ts: number
@@ -42,7 +43,7 @@ const items = ref<UiMessage[]>([])
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 const done = ref(false)
-const lastId = ref<string | null>(null)
+const lastSeq = ref<string | null>(null)
 const wsCursor = ref(0)
 
 const draft = ref('')
@@ -59,7 +60,7 @@ const replyPreview = computed(() => {
 const chatEl = ref<HTMLElement | null>(null)
 const stickToBottom = ref(true)
 
-let lastSentReadAck: bigint = 0n
+let lastSentReadAckSeq: bigint = 0n
 let notifyPulling = false
 
 const members = ref<GroupMemberDto[]>([])
@@ -137,36 +138,45 @@ function toTs(v?: string | null) {
   return t
 }
 
-function toBigIntOrNull(id?: string | null) {
-  if (!id) return null
-  try {
-    return BigInt(id)
-  } catch {
-    return null
+function toBigIntFromAny(v: unknown): bigint | null {
+  if (v == null) return null
+  if (typeof v === 'bigint') return v
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return null
+    return BigInt(Math.trunc(v))
   }
+  if (typeof v === 'string') {
+    if (!v) return null
+    try {
+      return BigInt(v)
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
-function maxServerMsgId() {
+function maxMsgSeq() {
   let max = 0n
   for (const m of items.value) {
-    const sid = toBigIntOrNull(m.serverMsgId)
-    if (sid != null && sid > max) max = sid
+    const seq = m.msgSeq ?? null
+    if (seq != null && seq > max) max = seq
   }
   return max
 }
 
-async function pullSinceLatest(hintServerMsgId?: string | null) {
+async function pullSinceLatest(hintMsgSeq?: string | number | null) {
   if (notifyPulling) return
   notifyPulling = true
   try {
-    const curMax = maxServerMsgId()
-    const hint = toBigIntOrNull(hintServerMsgId ?? null)
+    const curMax = maxMsgSeq()
+    const hint = toBigIntFromAny(hintMsgSeq ?? null)
     if (hint != null && hint <= curMax) return
 
     const qs = new URLSearchParams()
     qs.set('groupId', groupId.value)
     qs.set('limit', '50')
-    if (curMax > 0n) qs.set('sinceId', curMax.toString())
+    if (curMax > 0n) qs.set('sinceSeq', curMax.toString())
 
     const data = await apiGet<MessageEntity[]>(`/group/message/since?${qs.toString()}`)
     if (!data.length) return
@@ -178,6 +188,7 @@ async function pullSinceLatest(hintServerMsgId?: string | null) {
       mapped.push({
         clientMsgId: m.clientMsgId ?? uuid(),
         serverMsgId: m.serverMsgId,
+        msgSeq: toBigIntFromAny(m.msgSeq),
         fromUserId: m.fromUserId,
         content: m.content,
         ts: new Date(m.createdAt).getTime(),
@@ -239,10 +250,11 @@ function sendAckDelivered(serverMsgId: string, toUserId: string) {
 }
 
 function sendAckRead(serverMsgId: string, toUserId: string) {
-  const sid = toBigIntOrNull(serverMsgId)
-  if (sid == null) return
-  if (sid <= lastSentReadAck) return
-  lastSentReadAck = sid
+  const target = items.value.find((m) => m.serverMsgId === serverMsgId)
+  const seq = target?.msgSeq ?? null
+  if (seq == null) return
+  if (seq <= lastSentReadAckSeq) return
+  lastSentReadAckSeq = seq
   try {
     ws.send({
       type: 'ACK',
@@ -260,21 +272,22 @@ function readUpToLatestVisible() {
   if (!auth.userId) return
   if (!isNearBottom()) return
 
-  let max: { sid: bigint; fromUserId: string } | null = null
+  let max: { seq: bigint; fromUserId: string; serverMsgId: string } | null = null
   for (const m of items.value) {
     if (m.fromUserId === auth.userId) continue
-    const sid = toBigIntOrNull(m.serverMsgId)
-    if (sid == null) continue
-    if (max == null || sid > max.sid) max = { sid, fromUserId: m.fromUserId }
+    if (!m.serverMsgId) continue
+    const seq = m.msgSeq ?? null
+    if (seq == null) continue
+    if (max == null || seq > max.seq) max = { seq, fromUserId: m.fromUserId, serverMsgId: m.serverMsgId }
   }
   if (max) {
-    sendAckRead(max.sid.toString(), max.fromUserId)
+    sendAckRead(max.serverMsgId, max.fromUserId)
   }
 }
 
 function resetAndLoad() {
   items.value = []
-  lastId.value = null
+  lastSeq.value = null
   done.value = false
   void loadMore()
 }
@@ -293,20 +306,22 @@ async function loadMore() {
     const qs = new URLSearchParams()
     qs.set('groupId', groupId.value)
     qs.set('limit', '20')
-    if (lastId.value != null) {
-      qs.set('lastId', lastId.value)
+    if (lastSeq.value != null) {
+      qs.set('lastSeq', lastSeq.value)
     }
     const data = await apiGet<MessageEntity[]>(`/group/message/cursor?${qs.toString()}`)
     if (!data.length) {
       done.value = true
       return
     }
-    lastId.value = data.length ? data[data.length - 1]!.id : null
+    const curLastSeq = data.length ? data[data.length - 1]!.msgSeq : null
+    lastSeq.value = curLastSeq == null ? null : String(curLastSeq)
 
     const mapped = data
       .map((m) => ({
         clientMsgId: m.clientMsgId ?? uuid(),
         serverMsgId: m.serverMsgId,
+        msgSeq: toBigIntFromAny(m.msgSeq),
         fromUserId: m.fromUserId,
         content: m.content,
         ts: new Date(m.createdAt).getTime(),
@@ -604,6 +619,7 @@ function applyWsEvent(ev: WsEnvelope) {
     if (!target) return
     target.status = 'sent'
     if (ev.serverMsgId) target.serverMsgId = ev.serverMsgId
+    if (ev.msgSeq != null) target.msgSeq = toBigIntFromAny(ev.msgSeq)
     if (ev.body) target.content = ev.body
     return
   }
@@ -641,7 +657,7 @@ function applyWsEvent(ev: WsEnvelope) {
 
   if (ev.type === 'GROUP_NOTIFY') {
     if (!ev.groupId || ev.groupId !== groupId.value) return
-    void pullSinceLatest(ev.serverMsgId ?? null)
+    void pullSinceLatest(ev.msgSeq ?? null)
     return
   }
 
@@ -653,6 +669,7 @@ function applyWsEvent(ev: WsEnvelope) {
     const msg: UiMessage = {
       clientMsgId: ev.clientMsgId ?? uuid(),
       serverMsgId: ev.serverMsgId ?? undefined,
+      msgSeq: toBigIntFromAny(ev.msgSeq),
       fromUserId: ev.from,
       content: ev.body ?? '',
       ts: ev.ts ?? Date.now(),
@@ -859,7 +876,6 @@ watch(
             <UiAvatar :text="memberDisplayName(m.userId)" :seed="m.userId" :size="28" />
             <div class="mentionMeta">
               <div class="mentionName">{{ memberDisplayName(m.userId) }}</div>
-              <div class="mentionId muted">uid={{ m.userId }}</div>
             </div>
           </button>
           <div v-if="membersLoaded && !mentionCandidates.length" class="mentionEmpty muted">没有匹配的成员</div>
@@ -919,9 +935,7 @@ watch(
               <UiAvatar :text="memberDisplayName(m.userId)" :seed="m.userId" :size="32" />
               <div class="memberMeta">
                 <div class="memberName">{{ memberDisplayName(m.userId) }}</div>
-                <div class="memberId muted">
-                  uid={{ m.userId }}<span v-if="String(m.userId) === String(auth.userId)"> · 我</span>
-                </div>
+                <div v-if="String(m.userId) === String(auth.userId)" class="memberId muted">我</div>
               </div>
             </button>
             <div v-if="membersLoaded && memberQueryNorm && drawerMembers.length === 0" class="drawerEmpty muted">无匹配结果</div>
@@ -1186,13 +1200,6 @@ watch(
   font-weight: 850;
   font-size: 13px;
   color: rgba(15, 23, 42, 0.92);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mentionId {
-  margin-top: 2px;
-  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

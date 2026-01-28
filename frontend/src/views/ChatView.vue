@@ -16,6 +16,7 @@ import UiAvatar from '../components/UiAvatar.vue'
 type UiMessage = {
   clientMsgId: string
   serverMsgId?: string
+  msgSeq?: bigint | null
   fromUserId: string
   toUserId: string
   content: string
@@ -38,7 +39,7 @@ const dmMuted = computed(() => dnd.isDmMuted(peerUserId.value))
 const items = ref<UiMessage[]>([])
 const loading = ref(false)
 const done = ref(false)
-const lastId = ref<string | null>(null)
+const lastSeq = ref<string | null>(null)
 
 const draft = ref('')
 const errorMsg = ref<string | null>(null)
@@ -53,29 +54,38 @@ const callLoading = ref(false)
 const callError = ref<string | null>(null)
 const callRecords = ref<CallRecordDto[]>([])
 
-let peerReadUpTo: bigint = 0n
-let lastSentReadAck: bigint = 0n
+let peerReadUpToSeq: bigint = 0n
+let lastSentReadAckSeq: bigint = 0n
 
 function uuid() {
   return crypto.randomUUID()
 }
 
-function toBigIntOrNull(id?: string | null) {
-  if (!id) return null
-  try {
-    return BigInt(id)
-  } catch {
-    return null
+function toBigIntFromAny(v: unknown): bigint | null {
+  if (v == null) return null
+  if (typeof v === 'bigint') return v
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return null
+    return BigInt(Math.trunc(v))
   }
+  if (typeof v === 'string') {
+    if (!v) return null
+    try {
+      return BigInt(v)
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 function markOutgoingRead(upTo: bigint) {
-  peerReadUpTo = upTo
+  peerReadUpToSeq = upTo
   for (const m of items.value) {
     if (m.fromUserId !== auth.userId) continue
-    const sid = toBigIntOrNull(m.serverMsgId)
-    if (sid == null) continue
-    if (sid <= upTo) {
+    const seq = m.msgSeq ?? null
+    if (seq == null) continue
+    if (seq <= upTo) {
       m.status = 'read'
     }
   }
@@ -95,11 +105,9 @@ function sendAckDelivered(serverMsgId: string, toUserId: string) {
   }
 }
 
-function sendAckRead(serverMsgId: string, toUserId: string) {
-  const sid = toBigIntOrNull(serverMsgId)
-  if (sid == null) return
-  if (sid <= lastSentReadAck) return
-  lastSentReadAck = sid
+function sendAckRead(serverMsgId: string, msgSeq: bigint, toUserId: string) {
+  if (msgSeq <= lastSentReadAckSeq) return
+  lastSentReadAckSeq = msgSeq
   try {
     ws.send({
       type: 'ACK',
@@ -118,15 +126,20 @@ function readUpToLatestVisible() {
   if (!peerUserId.value) return
   if (!isNearBottom()) return
 
-  let max: bigint | null = null
+  let maxSeq: bigint | null = null
+  let maxServerMsgId: string | null = null
   for (const m of items.value) {
     if (m.fromUserId !== peerUserId.value) continue
-    const sid = toBigIntOrNull(m.serverMsgId)
-    if (sid == null) continue
-    if (max == null || sid > max) max = sid
+    if (!m.serverMsgId) continue
+    const seq = m.msgSeq ?? null
+    if (seq == null) continue
+    if (maxSeq == null || seq > maxSeq) {
+      maxSeq = seq
+      maxServerMsgId = m.serverMsgId
+    }
   }
-  if (max != null) {
-    sendAckRead(max.toString(), peerUserId.value)
+  if (maxSeq != null && maxServerMsgId) {
+    sendAckRead(maxServerMsgId, maxSeq, peerUserId.value)
   }
 }
 
@@ -227,7 +240,7 @@ async function openCallHistory() {
 
 function resetAndLoad() {
   items.value = []
-  lastId.value = null
+  lastSeq.value = null
   done.value = false
   void loadMore()
 }
@@ -246,20 +259,22 @@ async function loadMore() {
     const qs = new URLSearchParams()
     qs.set('peerUserId', peerUserId.value)
     qs.set('limit', '20')
-    if (lastId.value != null) {
-      qs.set('lastId', lastId.value)
+    if (lastSeq.value != null) {
+      qs.set('lastSeq', lastSeq.value)
     }
     const data = await apiGet<MessageEntity[]>(`/single-chat/message/cursor?${qs.toString()}`)
     if (!data.length) {
       done.value = true
       return
     }
-    lastId.value = data.length ? data[data.length - 1]!.id : null
+    const curLastSeq = data.length ? data[data.length - 1]!.msgSeq : null
+    lastSeq.value = curLastSeq == null ? null : String(curLastSeq)
 
     const mapped = data
       .map((m) => ({
         clientMsgId: m.clientMsgId ?? uuid(),
         serverMsgId: m.serverMsgId,
+        msgSeq: toBigIntFromAny(m.msgSeq),
         fromUserId: m.fromUserId,
         toUserId: m.toUserId ?? peerUserId.value,
         content: m.content,
@@ -312,12 +327,10 @@ function applyWsEvent(ev: WsEnvelope) {
     if (!target) return
     target.status = 'sent'
     if (ev.serverMsgId) target.serverMsgId = ev.serverMsgId
+    if (ev.msgSeq != null) target.msgSeq = toBigIntFromAny(ev.msgSeq)
     if (ev.body) target.content = ev.body
-    if (target.serverMsgId) {
-      const sid = toBigIntOrNull(target.serverMsgId)
-      if (sid != null && sid <= peerReadUpTo) {
+    if (target.msgSeq != null && target.msgSeq <= peerReadUpToSeq) {
         target.status = 'read'
-      }
     }
     return
   }
@@ -326,11 +339,16 @@ function applyWsEvent(ev: WsEnvelope) {
     return
   }
   if (ev.type === 'ACK' && ev.ackType?.toLowerCase() === 'read') {
-    if (!ev.serverMsgId) return
     if (ev.from !== peerUserId.value) return
-    const sid = toBigIntOrNull(ev.serverMsgId)
-    if (sid == null) return
-    markOutgoingRead(sid)
+    const seqFromEv = toBigIntFromAny(ev.msgSeq)
+    if (seqFromEv != null) {
+      markOutgoingRead(seqFromEv)
+      return
+    }
+    if (!ev.serverMsgId) return
+    const target = items.value.find((m) => m.serverMsgId === ev.serverMsgId)
+    if (!target || target.msgSeq == null) return
+    markOutgoingRead(target.msgSeq)
     return
   }
   if (ev.type === 'ERROR' && ev.clientMsgId) {
@@ -367,6 +385,7 @@ function applyWsEvent(ev: WsEnvelope) {
     const msg: UiMessage = {
       clientMsgId: ev.clientMsgId ?? uuid(),
       serverMsgId: ev.serverMsgId ?? undefined,
+      msgSeq: toBigIntFromAny(ev.msgSeq),
       fromUserId: ev.from,
       toUserId: ev.to,
       content: ev.body ?? '',
@@ -388,7 +407,10 @@ function applyWsEvent(ev: WsEnvelope) {
     if (ev.serverMsgId) {
       sendAckDelivered(ev.serverMsgId, ev.from)
       if (shouldStick && document.visibilityState === 'visible') {
-        sendAckRead(ev.serverMsgId, ev.from)
+        const seq = msg.msgSeq ?? null
+        if (seq != null) {
+          sendAckRead(ev.serverMsgId, seq, ev.from)
+        }
       }
     }
   }
@@ -409,7 +431,7 @@ async function refreshMemberState() {
     const st = await apiGet<SingleChatMemberStateDto>(
       `/single-chat/member/state?peerUserId=${encodeURIComponent(peerUserId.value)}`,
     )
-    const peerLastRead = toBigIntOrNull(st.peerLastReadMsgId ?? null)
+    const peerLastRead = toBigIntFromAny(st.peerLastReadMsgSeq ?? null)
     if (peerLastRead != null) {
       markOutgoingRead(peerLastRead)
     }
@@ -483,8 +505,8 @@ watch(
   () => peerUserId.value,
   () => {
     wsCursor.value = ws.events.length
-    peerReadUpTo = 0n
-    lastSentReadAck = 0n
+    peerReadUpToSeq = 0n
+    lastSentReadAckSeq = 0n
     resetAndLoad()
     void users.ensureBasics([peerUserId.value])
     void refreshMemberState()

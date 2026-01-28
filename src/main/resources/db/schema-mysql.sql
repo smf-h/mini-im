@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS t_single_chat (
   id BIGINT NOT NULL PRIMARY KEY,
   user1_id BIGINT NOT NULL,
   user2_id BIGINT NOT NULL,
+  next_msg_seq BIGINT NOT NULL DEFAULT 0 COMMENT 'allocator cursor for msg_seq',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   UNIQUE KEY uk_single_chat_pair (user1_id, user2_id),
@@ -37,6 +38,8 @@ CREATE TABLE IF NOT EXISTS t_single_chat_member (
   mute_until DATETIME(3) NULL,
   last_delivered_msg_id BIGINT NULL,
   last_read_msg_id BIGINT NULL,
+  last_delivered_msg_seq BIGINT NULL COMMENT 'delivered cursor by msg_seq',
+  last_read_msg_seq BIGINT NULL COMMENT 'read cursor by msg_seq',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   UNIQUE KEY uk_single_chat_member (single_chat_id, user_id),
@@ -52,6 +55,7 @@ CREATE TABLE IF NOT EXISTS t_group (
   group_code VARCHAR(16) NULL,
   group_code_updated_at DATETIME(3) NULL,
   created_by BIGINT NOT NULL,
+  next_msg_seq BIGINT NOT NULL DEFAULT 0 COMMENT 'allocator cursor for msg_seq',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   KEY idx_group_created_by (created_by),
@@ -69,6 +73,8 @@ CREATE TABLE IF NOT EXISTS t_group_member (
   speak_mute_until DATETIME(3) NULL,
   last_delivered_msg_id BIGINT NULL,
   last_read_msg_id BIGINT NULL,
+  last_delivered_msg_seq BIGINT NULL COMMENT 'delivered cursor by msg_seq',
+  last_read_msg_seq BIGINT NULL COMMENT 'read cursor by msg_seq',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   UNIQUE KEY uk_group_member (group_id, user_id),
@@ -113,6 +119,7 @@ CREATE TABLE IF NOT EXISTS t_call_record (
 
 CREATE TABLE IF NOT EXISTS t_message (
   id BIGINT NOT NULL PRIMARY KEY COMMENT 'msgId',
+  msg_seq BIGINT NOT NULL COMMENT 'conversation-local sequence (SSOT for ordering/cursor)',
   chat_type TINYINT NOT NULL COMMENT '1=single,2=group',
   single_chat_id BIGINT NULL,
   group_id BIGINT NULL,
@@ -127,6 +134,10 @@ CREATE TABLE IF NOT EXISTS t_message (
   updated_at DATETIME(3) NOT NULL,
   KEY idx_msg_single_id_id (single_chat_id, id),
   KEY idx_msg_group_id_id (group_id, id),
+  KEY idx_msg_single_id_seq (single_chat_id, msg_seq),
+  KEY idx_msg_group_id_seq (group_id, msg_seq),
+  UNIQUE KEY uk_single_chat_seq (single_chat_id, msg_seq),
+  UNIQUE KEY uk_group_seq (group_id, msg_seq),
   KEY idx_msg_to_user (to_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -135,7 +146,7 @@ CREATE TABLE IF NOT EXISTS t_message_ack (
   message_id BIGINT NOT NULL,
   user_id BIGINT NOT NULL,
   device_id VARCHAR(64) NULL,
-  ack_type TINYINT NOT NULL COMMENT '1=SAVED,2=READ',
+  ack_type TINYINT NOT NULL COMMENT '1=SAVED,2=DELIVERED,3=READ',
   ack_at DATETIME(3) NOT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,

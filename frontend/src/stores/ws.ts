@@ -139,8 +139,7 @@ export const useWsStore = defineStore('ws', () => {
       authed.value = false
       lastError.value = null
 
-      const url = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
-      socket = new WebSocket(url)
+      socket = new WebSocket(WS_URL)
 
       socket.onopen = () => {
         state.value = 'open'
@@ -178,6 +177,15 @@ export const useWsStore = defineStore('ws', () => {
           if (parsed.type === 'ERROR' && parsed.reason === 'token_expired') {
             flushWaiters(new Error('token_expired'))
             void handleTokenExpired()
+          }
+          if (parsed.type === 'ERROR' && (parsed.reason === 'auth_timeout' || parsed.reason === 'unauthorized')) {
+            lastError.value = parsed.reason ?? 'error'
+            flushWaiters(new Error(lastError.value))
+            try {
+              socket?.close()
+            } catch {
+              // ignore
+            }
           }
           if (parsed.type === 'ERROR' && (parsed.reason === 'kicked' || parsed.reason === 'session_invalid')) {
             auth.clear()

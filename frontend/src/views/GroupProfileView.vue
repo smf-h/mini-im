@@ -98,11 +98,6 @@ async function copyText(text: string, okMsg: string) {
   }
 }
 
-function copyGroupId() {
-  const id = profile.value?.groupId ?? groupId.value
-  void copyText(String(id), '已复制群号')
-}
-
 function copyGroupCode() {
   const code = (profile.value?.groupCode ?? '').trim()
   if (!code) {
@@ -281,10 +276,6 @@ onMounted(() => void load())
       <header class="header">
         <div class="headerLeft">
           <div class="title">{{ profile?.name ?? '群资料' }}</div>
-          <div class="metaRow">
-            <div class="metaText">群号：{{ profile?.groupId ?? groupId }}</div>
-            <button class="miniLink" type="button" @click="copyGroupId">复制</button>
-          </div>
         </div>
         <div class="headerRight">
           <button class="btn" @click="load">刷新</button>

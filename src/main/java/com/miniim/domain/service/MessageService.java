@@ -9,19 +9,19 @@ public interface MessageService extends IService<MessageEntity> {
 //    Long getOrCreateSingleChatId(Long fromUserId, Long toUserId);
 
     /**
-     * 按 id 倒序的游标分页：返回 id < lastId 的下一页；lastId 为空表示从最新开始。
+     * 按 msgSeq 倒序的游标分页：返回 msgSeq < lastSeq 的下一页；lastSeq 为空表示从最新开始。
      */
-    List<MessageEntity> cursorBySingleChatId(Long singleChatId, Long limit, Long lastId);
+    List<MessageEntity> cursorBySingleChatId(Long singleChatId, Long limit, Long lastSeq);
 
     /**
-     * 按 id 倒序的游标分页：返回 id < lastId 的下一页；lastId 为空表示从最新开始。
+     * 按 msgSeq 倒序的游标分页：返回 msgSeq < lastSeq 的下一页；lastSeq 为空表示从最新开始。
      */
-    List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastId);
+    List<MessageEntity> cursorByGroupId(Long groupId, Long limit, Long lastSeq);
 
     /**
-     * 增量拉取：返回 id > sinceId 的消息（按 id 升序）。
+     * 增量拉取：返回 msgSeq > sinceSeq 的消息（按 msgSeq 升序）。
      */
-    List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceId);
+    List<MessageEntity> sinceByGroupId(Long groupId, Long limit, Long sinceSeq);
 
     /**
      * 普通分页：按 pageNo/pageSize 返回 Page 对象。

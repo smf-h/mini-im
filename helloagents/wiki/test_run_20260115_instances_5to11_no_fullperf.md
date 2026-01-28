@@ -1,8 +1,10 @@
 # Instances=5..11（恢复默认 perf/60s）对照：实例数继续增加的拐点（2026-01-15）
 
+> ⚠️ 历史记录：本文原本涉及 `ws_perf/perf-trace` 的采样口径对照；相关能力在后续版本已移除，本文仅保留 E2E 对照结论与“实例数/选路”分析（不可复现分段口径）。
+
 ## 你要求的变更点（对应本次实验）
 
-1) **不要 PerfTraceFull**：本次不再使用 `-PerfTraceFull`，恢复默认 `PerfTraceSlowMs=500`、`PerfTraceSampleRate=0.01`（避免“全量日志打点”本身影响延迟）。  
+1) **不再依赖分段打点**：本次仅以 E2E 端到端结果对照（原 `ws_perf/perf-trace` 分段口径在后续版本已移除）。  
 2) **修复 6/8 偶数实例的落点偏差**：`rolePinned` 的选路从 `userId % N` 改为稳定哈希取模，避免 sender userId 步长=2 时只落半数网关。实现位置：`scripts/ws-load-test/WsLoadTest.java` 的 `pickWsUrl()`。  
 3) **时长恢复为 60s**：不再显式传 `-DurationSmallSeconds 30`，脚本默认就是 60s（见 `scripts/ws-cluster-5x-test/run.ps1` 参数默认值）。
 
@@ -63,4 +65,3 @@
 1) **单机多实例不是“真扩容”**：实例数增加会带来更多 JVM/线程/连接池争用；出现拐点是正常的。
 2) **wsErrorAvg 波动很大**（6/7/8/9/10），这会影响 E2E 的有效样本与尾延迟稳定性：同样的 offered load 下，有的 run 更容易出现 ACK/连接异常。  
    - 这类波动通常与单机资源竞争（CPU/GC/磁盘/DB）有关，而不是“实例数越大一定越稳定”。
-

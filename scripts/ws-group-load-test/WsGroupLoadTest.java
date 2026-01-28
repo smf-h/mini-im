@@ -510,22 +510,12 @@ public class WsGroupLoadTest {
     }
 
     private static WebSocket connectPreferHeaderThenQuery(HttpClient httpClient, String wsUrl, String token, WebSocket.Listener listener) throws Exception {
-        try {
-            return httpClient.newWebSocketBuilder()
-                    .header("Authorization", "Bearer " + token)
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .buildAsync(URI.create(wsUrl), listener)
-                    .orTimeout(10, TimeUnit.SECONDS)
-                    .join();
-        } catch (Exception e) {
-            String sep = wsUrl.contains("?") ? "&" : "?";
-            String url = wsUrl + sep + "token=" + urlEncode(token);
-            return httpClient.newWebSocketBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .buildAsync(URI.create(url), listener)
-                    .orTimeout(10, TimeUnit.SECONDS)
-                    .join();
-        }
+        // AUTH-first：握手阶段不再做鉴权；token 只在首包 AUTH 里传。
+        return httpClient.newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .buildAsync(URI.create(wsUrl), listener)
+                .orTimeout(10, TimeUnit.SECONDS)
+                .join();
     }
 
     private static String httpJson(HttpClient http, String url, String token, String body) throws Exception {

@@ -16,10 +16,9 @@ import com.miniim.domain.enums.MentionType;
 import com.miniim.domain.mapper.GroupMemberMapper;
 import com.miniim.domain.mapper.MessageMentionMapper;
 import com.miniim.domain.service.GroupService;
+import com.miniim.domain.service.MsgSeqAllocator;
 import com.miniim.domain.service.MessageService;
 import com.miniim.gateway.config.WsGroupUpdatedAtDebounceProperties;
-import com.miniim.gateway.config.WsPerfTraceProperties;
-import com.miniim.gateway.config.WsInboundQueueProperties;
 import com.miniim.gateway.session.SessionRegistry;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -53,6 +52,7 @@ public class WsGroupChatHandler {
     private final SessionRegistry sessionRegistry;
     private final ClientMsgIdIdempotency idempotency;
     private final MessageService messageService;
+    private final MsgSeqAllocator msgSeqAllocator;
     private final GroupMemberMapper groupMemberMapper;
     private final GroupMemberIdsCache groupMemberIdsCache;
     private final MessageMentionMapper messageMentionMapper;
@@ -61,8 +61,6 @@ public class WsGroupChatHandler {
     private final WsPushService wsPushService;
     private final GroupChatDispatchService groupChatDispatchService;
     private final WsWriter wsWriter;
-    private final WsPerfTraceProperties perfTraceProps;
-    private final WsInboundQueueProperties inboundQueueProps;
     private final GroupUpdatedAtDebouncer groupUpdatedAtDebouncer;
     private final WsGroupUpdatedAtDebounceProperties groupUpdatedAtProps;
     @Qualifier("imDbExecutor")
@@ -77,25 +75,13 @@ public class WsGroupChatHandler {
             wsWriter.writeError(ctx, "unauthorized", msg.getClientMsgId(), msg.getServerMsgId());
             return;
         }
-        long enqueuedAtNs = System.nanoTime();
-        if (inboundQueueProps != null && inboundQueueProps.enabledEffective()) {
-            int maxPending = inboundQueueProps.maxPendingPerConnEffective();
-            WsChannelSerialQueue.tryEnqueue(channel, () -> handleSerial(ctx, msg, fromUserId, enqueuedAtNs), maxPending)
-                    .exceptionally(e -> {
-                        wsWriter.writeError(ctx, "server_busy", msg.getClientMsgId(), null);
-                        return null;
-                    });
-        } else {
-            WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId, enqueuedAtNs));
-        }
+        WsChannelSerialQueue.enqueue(channel, () -> handleSerial(ctx, msg, fromUserId));
     }
 
-    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId, long enqueuedAtNs) {
+    private CompletionStage<Void> handleSerial(ChannelHandlerContext ctx, WsEnvelope msg, long fromUserId) {
         CompletableFuture<Void> done = new CompletableFuture<>();
 
         Channel channel = ctx.channel();
-        long serialStartNs = System.nanoTime();
-        long queueNs = serialStartNs - enqueuedAtNs;
 
         if (!validate(ctx, msg)) {
             done.complete(null);
@@ -138,7 +124,16 @@ public class WsGroupChatHandler {
             ClientMsgIdIdempotency.Claim existed = idempotency.putIfAbsent(idempotencyKey, newClaim);
             perfNs[2] = System.nanoTime() - t;
             if (existed != null) {
-                return Outcome.duplicate(existed.getServerMsgId());
+                long existedMsgSeq = 0L;
+                try {
+                    long existedMsgId = Long.parseLong(existed.getServerMsgId());
+                    MessageEntity existedMsg = messageService.getById(existedMsgId);
+                    if (existedMsg != null && existedMsg.getMsgSeq() != null && existedMsg.getMsgSeq() > 0) {
+                        existedMsgSeq = existedMsg.getMsgSeq();
+                    }
+                } catch (Exception ignore) {
+                }
+                return Outcome.duplicate(existed.getServerMsgId(), existedMsgSeq);
             }
 
             t = System.nanoTime();
@@ -174,6 +169,9 @@ public class WsGroupChatHandler {
             messageEntity.setStatus(MessageStatus.SAVED);
             messageEntity.setContent(sanitizedBody);
             messageEntity.setClientMsgId(clientMsgId);
+
+            long msgSeq = msgSeqAllocator.allocateNextGroupSeq(groupId);
+            messageEntity.setMsgSeq(msgSeq);
 
             t = System.nanoTime();
             Map<Long, MentionType> importantTargets = resolveImportantTargets(msg, fromUserId, groupId, memberIds);
@@ -212,11 +210,10 @@ public class WsGroupChatHandler {
                 messageMentionMapper.insertBatch(rows);
                 perfNs[8] = System.nanoTime() - t;
             }
-            return Outcome.ok(memberIds, importantTargets);
+            return Outcome.ok(memberIds, importantTargets, msgSeq);
         }, dbExecutor).orTimeout(3, TimeUnit.SECONDS);
 
         future.whenComplete((out, error) -> {
-            long dbDoneNs = System.nanoTime();
             if (error != null) {
                 log.error("save group message failed: {}", error.toString());
                 try {
@@ -239,14 +236,13 @@ public class WsGroupChatHandler {
                 return;
             }
             if (out.duplicateServerMsgId != null) {
-                wsWriter.writeAck(channel, fromUserId, clientMsgId, out.duplicateServerMsgId, AckType.SAVED.getDesc(), null);
+                wsWriter.writeAck(channel, fromUserId, clientMsgId, out.duplicateServerMsgId, out.msgSeq <= 0 ? null : out.msgSeq, AckType.SAVED.getDesc(), null);
                 done.complete(null);
                 return;
             }
 
             ctx.executor().execute(() -> {
-                long dbToEventLoopNs = System.nanoTime() - dbDoneNs;
-                wsWriter.writeAck(ctx, fromUserId, clientMsgId, serverMsgId, AckType.SAVED.getDesc(), sanitizedBody);
+                wsWriter.writeAck(ctx, fromUserId, clientMsgId, serverMsgId, out.msgSeq <= 0 ? null : out.msgSeq, AckType.SAVED.getDesc(), sanitizedBody);
 
                 WsEnvelope normal = new WsEnvelope();
                 normal.type = "GROUP_CHAT";
@@ -254,6 +250,7 @@ public class WsGroupChatHandler {
                 normal.groupId = groupId;
                 normal.clientMsgId = clientMsgId;
                 normal.serverMsgId = serverMsgId;
+                normal.msgSeq = out.msgSeq;
                 normal.msgType = msg.getMsgType();
                 normal.body = sanitizedBody;
                 normal.ts = ts;
@@ -264,6 +261,7 @@ public class WsGroupChatHandler {
                 important.groupId = normal.groupId;
                 important.clientMsgId = normal.clientMsgId;
                 important.serverMsgId = normal.serverMsgId;
+                important.msgSeq = normal.msgSeq;
                 important.msgType = normal.msgType;
                 important.body = normal.body;
                 important.ts = normal.ts;
@@ -274,6 +272,7 @@ public class WsGroupChatHandler {
                 normalNotify.from = fromUserId;
                 normalNotify.groupId = groupId;
                 normalNotify.serverMsgId = serverMsgId;
+                normalNotify.msgSeq = out.msgSeq;
                 normalNotify.ts = ts;
 
                 WsEnvelope importantNotify = new WsEnvelope();
@@ -281,6 +280,7 @@ public class WsGroupChatHandler {
                 importantNotify.from = normalNotify.from;
                 importantNotify.groupId = normalNotify.groupId;
                 importantNotify.serverMsgId = normalNotify.serverMsgId;
+                importantNotify.msgSeq = normalNotify.msgSeq;
                 importantNotify.ts = normalNotify.ts;
                 importantNotify.important = true;
 
@@ -294,9 +294,6 @@ public class WsGroupChatHandler {
                         normalNotify,
                         importantNotify
                 );
-                long dispatchNs = System.nanoTime() - dispatchStartNs;
-                
-                maybeLogPerf(ctx, fromUserId, groupId, clientMsgId, serverMsgId, queueNs, dbToEventLoopNs, dispatchNs, perfNs, enqueuedAtNs, out.memberIds == null ? 0 : out.memberIds.size());
                 if (groupId > 0
                         && (groupUpdatedAtProps == null || !groupUpdatedAtProps.inlineDbEffective())
                         && shouldUpdateGroupNow(groupId)) {
@@ -343,70 +340,31 @@ public class WsGroupChatHandler {
         }
     }
 
-    private void maybeLogPerf(ChannelHandlerContext ctx,
-                              long fromUserId,
-                              long groupId,
-                              String clientMsgId,
-                              String serverMsgId,
-                              long queueNs,
-                              long dbToEventLoopNs,
-                              long dispatchNs,
-                              long[] perfNs,
-                              long enqueuedAtNs,
-                              int memberCount) {
-        if (perfTraceProps == null || !perfTraceProps.enabledEffective()) {
-            return;
-        }
-        long nowNs = System.nanoTime();
-        long totalMs = TimeUnit.NANOSECONDS.toMillis(nowNs - enqueuedAtNs);
-        long slowMs = perfTraceProps.slowMsEffective();
-        double sampleRate = perfTraceProps.sampleRateEffective();
-        boolean sampled = sampleRate > 0 && ThreadLocalRandom.current().nextDouble() < sampleRate;
-        if (totalMs < slowMs && !sampled) {
-            return;
-        }
-
-        String cid = ctx.channel().attr(SessionRegistry.ATTR_CONN_ID).get();
-        log.info("ws_perf group_chat from={} groupId={} members={} cid={} clientMsgId={} serverMsgId={} totalMs={} queueMs={} dbQueueMs={} myMemberMs={} idemMs={} memberCacheGetMs={} memberDbListMs={} resolveImportantMs={} saveMsgMs={} updateGroupMs={} mentionInsertMs={} dbToEventLoopMs={} dispatchMs={}",
-                fromUserId, groupId, memberCount, cid, clientMsgId, serverMsgId,
-                totalMs,
-                TimeUnit.NANOSECONDS.toMillis(queueNs),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[0]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[1]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[2]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[3]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[4]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[5]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[6]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[7]),
-                TimeUnit.NANOSECONDS.toMillis(perfNs[8]),
-                TimeUnit.NANOSECONDS.toMillis(dbToEventLoopNs),
-                TimeUnit.NANOSECONDS.toMillis(dispatchNs));
-    }
-
     private static class Outcome {
         final Set<Long> memberIds;
         final Map<Long, MentionType> importantTargets;
+        final long msgSeq;
         final String duplicateServerMsgId;
         final String reason;
 
-        private Outcome(Set<Long> memberIds, Map<Long, MentionType> importantTargets, String duplicateServerMsgId, String reason) {
+        private Outcome(Set<Long> memberIds, Map<Long, MentionType> importantTargets, long msgSeq, String duplicateServerMsgId, String reason) {
             this.memberIds = memberIds == null ? Set.of() : memberIds;
             this.importantTargets = importantTargets == null ? Map.of() : importantTargets;
+            this.msgSeq = msgSeq;
             this.duplicateServerMsgId = duplicateServerMsgId;
             this.reason = reason;
         }
 
-        static Outcome ok(Set<Long> memberIds, Map<Long, MentionType> importantTargets) {
-            return new Outcome(memberIds, importantTargets, null, null);
+        static Outcome ok(Set<Long> memberIds, Map<Long, MentionType> importantTargets, long msgSeq) {
+            return new Outcome(memberIds, importantTargets, msgSeq, null, null);
         }
 
-        static Outcome duplicate(String serverMsgId) {
-            return new Outcome(Set.of(), Map.of(), serverMsgId, null);
+        static Outcome duplicate(String serverMsgId, long msgSeq) {
+            return new Outcome(Set.of(), Map.of(), msgSeq, serverMsgId, null);
         }
 
         static Outcome error(String reason) {
-            return new Outcome(Set.of(), Map.of(), null, reason);
+            return new Outcome(Set.of(), Map.of(), 0L, null, reason);
         }
     }
 

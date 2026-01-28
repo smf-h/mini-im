@@ -25,13 +25,13 @@ public class GroupMessageController {
     private final MessageService messageService;
 
     /**
-     * 按 id 倒序的游标分页：返回 id < lastId 的下一页；lastId 为空表示从最新开始。
+     * 按 msgSeq 倒序的游标分页：返回 msgSeq < lastSeq 的下一页；lastSeq 为空表示从最新开始。
      */
     @GetMapping("/cursor")
     public Result<List<MessageEntity>> cursor(
             @RequestParam Long groupId,
             @RequestParam(defaultValue = "20") Long limit,
-            @RequestParam(required = false) Long lastId
+            @RequestParam(required = false) Long lastSeq
     ) {
         Long userId = AuthContext.getUserId();
         if (userId == null) {
@@ -48,17 +48,17 @@ public class GroupMessageController {
             return Result.fail(ApiCodes.FORBIDDEN, "not_group_member");
         }
 
-        return Result.ok(messageService.cursorByGroupId(groupId, limit, lastId));
+        return Result.ok(messageService.cursorByGroupId(groupId, limit, lastSeq));
     }
 
     /**
-     * 增量拉取：返回 id > sinceId 的消息（按 id 升序）。sinceId 为空表示从 0 开始。
+     * 增量拉取：返回 msgSeq > sinceSeq 的消息（按 msgSeq 升序）。sinceSeq 为空表示从 0 开始。
      */
     @GetMapping("/since")
     public Result<List<MessageEntity>> since(
             @RequestParam Long groupId,
             @RequestParam(defaultValue = "50") Long limit,
-            @RequestParam(required = false) Long sinceId
+            @RequestParam(required = false) Long sinceSeq
     ) {
         Long userId = AuthContext.getUserId();
         if (userId == null) {
@@ -75,6 +75,6 @@ public class GroupMessageController {
             return Result.fail(ApiCodes.FORBIDDEN, "not_group_member");
         }
 
-        return Result.ok(messageService.sinceByGroupId(groupId, limit, sinceId));
+        return Result.ok(messageService.sinceByGroupId(groupId, limit, sinceSeq));
     }
 }

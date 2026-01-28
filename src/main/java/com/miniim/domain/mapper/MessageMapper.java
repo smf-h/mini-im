@@ -14,16 +14,17 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             select m.*
             from t_message m
             join (
-              select single_chat_id, max(id) as max_id
+              select single_chat_id, max(msg_seq) as max_seq
               from t_message
-              where single_chat_id in
+              where chat_type = 1
+                and single_chat_id in
               <foreach collection="singleChatIds" item="id" open="(" separator="," close=")">
                 #{id}
               </foreach>
               group by single_chat_id
             ) x
               on m.single_chat_id = x.single_chat_id
-             and m.id = x.max_id
+             and m.msg_seq = x.max_seq
             </script>
             """)
     List<MessageEntity> selectLastMessagesBySingleChatIds(@Param("singleChatIds") List<Long> singleChatIds);
@@ -33,7 +34,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             select m.*
             from t_message m
             join (
-              select group_id, max(id) as max_id
+              select group_id, max(msg_seq) as max_seq
               from t_message
               where chat_type = 2
                 and group_id in
@@ -43,7 +44,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
               group by group_id
             ) x
               on m.group_id = x.group_id
-             and m.id = x.max_id
+             and m.msg_seq = x.max_seq
             </script>
             """)
     List<MessageEntity> selectLastMessagesByGroupIds(@Param("groupIds") List<Long> groupIds);
@@ -57,8 +58,8 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
              and scm.user_id = #{userId}
             where m.chat_type = 1
               and m.to_user_id = #{userId}
-              and m.id &gt; ifnull(scm.last_delivered_msg_id, 0)
-            order by m.id asc
+              and m.msg_seq &gt; ifnull(scm.last_delivered_msg_seq, 0)
+            order by m.msg_seq asc
             limit #{limit}
             </script>
             """)
@@ -72,9 +73,9 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
               on gm.group_id = m.group_id
              and gm.user_id = #{userId}
             where m.chat_type = 2
-              and m.id &gt; ifnull(gm.last_delivered_msg_id, 0)
+              and m.msg_seq &gt; ifnull(gm.last_delivered_msg_seq, 0)
               and (m.from_user_id is null or m.from_user_id != #{userId})
-            order by m.id asc
+            order by m.msg_seq asc
             limit #{limit}
             </script>
             """)
@@ -93,7 +94,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
               <foreach collection="singleChatIds" item="id" open="(" separator="," close=")">
                 #{id}
               </foreach>
-              and m.id &gt; ifnull(scm.last_read_msg_id, 0)
+              and m.msg_seq &gt; ifnull(scm.last_read_msg_seq, 0)
             group by m.single_chat_id
             </script>
             """)
@@ -112,7 +113,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
               <foreach collection="groupIds" item="id" open="(" separator="," close=")">
                 #{id}
               </foreach>
-              and m.id &gt; ifnull(gm.last_read_msg_id, 0)
+              and m.msg_seq &gt; ifnull(gm.last_read_msg_seq, 0)
               and (m.from_user_id is null or m.from_user_id != #{userId})
             group by m.group_id
             </script>

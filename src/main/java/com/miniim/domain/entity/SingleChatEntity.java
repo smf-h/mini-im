@@ -20,6 +20,9 @@ public class SingleChatEntity {
 
     private Long user2Id;
 
+    /** 会话内 msg_seq 分配游标。 */
+    private Long nextMsgSeq;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

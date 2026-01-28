@@ -26,6 +26,9 @@ public class GroupEntity {
     /** GroupCode 最近一次生成/重置时间（用于限频）。 */
     private LocalDateTime groupCodeUpdatedAt;
 
+    /** 会话内 msg_seq 分配游标。 */
+    private Long nextMsgSeq;
+
     private Long createdBy;
 
     @TableField(fill = FieldFill.INSERT)

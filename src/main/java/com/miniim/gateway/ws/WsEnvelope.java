@@ -22,6 +22,9 @@ public class WsEnvelope {
 //    public Long convId;
     public String serverMsgId;
 
+    /** 会话内单调序列（用于稳定排序/cursor）。 */
+    public Long msgSeq;
+
     /** 服务端确认的发送方 userId。注意：不能信任客户端自己填的 from，必须以鉴权绑定身份为准。 */
     public Long from;
 

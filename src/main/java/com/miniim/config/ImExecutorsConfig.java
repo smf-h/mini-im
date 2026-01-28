@@ -12,7 +12,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Configuration
 @EnableConfigurationProperties({
         ImDbExecutorProperties.class,
-        ImWsEncodeExecutorProperties.class,
         ImPostDbExecutorProperties.class,
         ImAckExecutorProperties.class
 })
@@ -31,25 +30,6 @@ public class ImExecutorsConfig {
         executor.setCorePoolSize(core);
         executor.setMaxPoolSize(max);
         executor.setQueueCapacity(props == null ? 10_000 : props.queueCapacityEffective());
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
-        executor.setAwaitTerminationSeconds(10);
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.initialize();
-        return executor;
-    }
-
-    @Bean("imWsEncodeExecutor")
-    public Executor imWsEncodeExecutor(ImWsEncodeExecutorProperties props) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setThreadNamePrefix("im-ws-enc-");
-        int core = props == null ? ImWsEncodeExecutorProperties.defaultCorePoolSize() : props.corePoolSizeEffective();
-        int max = props == null ? core : props.maxPoolSizeEffective();
-        if (max < core) {
-            max = core;
-        }
-        executor.setCorePoolSize(core);
-        executor.setMaxPoolSize(max);
-        executor.setQueueCapacity(props == null ? 5_000 : props.queueCapacityEffective());
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.setAwaitTerminationSeconds(10);
         executor.setWaitForTasksToCompleteOnShutdown(true);

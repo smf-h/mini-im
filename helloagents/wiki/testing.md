@@ -39,7 +39,7 @@
 
 ### 5 实例一键分级压测（单机/Windows）
 
-用于：一键启动 5 个网关实例（共用同一 MySQL/Redis），并按分级（默认 `500/5000/50000`）执行 connect/ping/single_e2e + 群聊 push 压测，同时解析 `ws_perf` 分段耗时。
+用于：一键启动 5 个网关实例（共用同一 MySQL/Redis），并按分级（默认 `500/5000/50000`）执行 connect/ping/single_e2e + 群聊 push 压测。
 
 - `powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-5x-test/run.ps1`
   - ⚠️ 若你的 PowerShell Profile 启用了 conda auto activate，且出现 `UnicodeEncodeError: 'gbk' codec can't encode ...`，建议在**已打开的 PowerShell 会话**里用 `& "scripts/ws-cluster-5x-test/run.ps1" ...` 直接调用（避免启动子 powershell 进程时触发 conda hook）。
@@ -69,9 +69,7 @@
 
 ### ws_perf 分段耗时解析（服务端）
 
-服务端在开启 `im.gateway.ws.perf-trace.*` 后会输出 `ws_perf ...` 日志（采样/慢请求阈值可配），可用脚本解析分位数：
-
-- `powershell -ExecutionPolicy Bypass -File scripts/ws-perf-tools/parse-ws-perf.ps1 -LogPath logs/<runDir>/gw-1.out.log -MaxLines 450000`
+本项目不再内置 `ws_perf` 分段日志解析链路；性能排查建议优先结合压测脚本的端到端统计与应用日志逐步定位瓶颈（DB/Redis/网关背压等）。
 
 ## WS 背压/慢消费者保护（服务端）
 
@@ -119,7 +117,7 @@
 
 ## WebSocket 单聊冒烟（核心不依赖 Redis）
 
-用于快速验证：`SINGLE_CHAT` 落库 ACK（saved）与接收 ACK（ack_receive）联动是否正常，以及 DB 状态是否推进到 `RECEIVED`。
+用于快速验证：`SINGLE_CHAT` 落库 ACK（saved）与接收端 `ACK(delivered/read)` 推进成员游标是否正常（兼容 `ack_read`）。
 
 补充说明：
 - 当前离线补发逻辑在服务端 `AUTH` 处理后触发；即使已在握手阶段完成鉴权，仍会在收到 `AUTH` 帧后执行离线补发。
@@ -128,7 +126,7 @@
 前置条件：
 - 服务端已启动（HTTP `:8080` + WS `:9001/ws`）
 - 本机安装 JDK（需要 `javac` / `java`）
-- （可选）本机可访问 MySQL（用于校验 `t_message.status`）
+- （可选）本机可访问 MySQL（用于校验消息是否落库/撤回等 `t_message.status`；送达/已读最终态以成员游标为准）
 
 运行：
  - 跑全部场景（默认）：`basic + idempotency + offline + cron + auth + friend_request`
@@ -168,7 +166,7 @@
 - `vars`：关键变量快照（ws/scenario/userA/userB/timeoutMs/authTokenTtlSeconds/redisHost/redisPort）
 - `scenarios`：每个场景的结果（包含 `clientMsgId/serverMsgId/expected` 等）
 - `scenarios.*.steps`：每一步的消息内容与原因（包含 `raw` 原始 JSON，便于你对照客户端协议）
-- `scenarios.*.dbStatus`：开启 `-CheckDb` 时回填（例如 `5=RECEIVED`、`6=DROPPED`）
+- `scenarios.*.dbStatus`：开启 `-CheckDb` 时回填（例如 `t_message.status=1(SAVED)/4(REVOKED)`；送达/已读不看该字段）
 - `scenarios.*.dbRow`：开启 `-CheckDb` 时回填的 `t_message` 关键字段快照
 - `redis`：开启 `-CheckRedis` 时回填（主要看 `im:gw:route:<userId>` 的 value/ttl）
 - `explain`：ACK 与 DB 状态的含义（用于解释“为什么会这样返回”）

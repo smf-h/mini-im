@@ -26,14 +26,21 @@
   - `id`：msgId（建议作为 `serverMsgId` 的主键来源）
   - `client_msg_id`：客户端幂等键（用于发送方重试去重）
   - `status`：消息状态（枚举见 `com.miniim.domain.enums.MessageStatus`）
-- 关键状态（当前使用口径）：
-  - `SAVED`：已落库，等待接收方 ACK_RECEIVED
-  - `DROPPED`：离线/待补发
-  - `RECEIVED`：接收方已收到（业务最终态之一）
+- 关键口径（以当前实现为准）：
+  - `t_message.status` 主要用于表示消息是否**已落库/已撤回**等“消息本体状态”（如 `SAVED/REVOKED`）。
+  - **送达/已读的最终态不以 `t_message.status` 为准**，以成员游标为准（见下文）。
 
-## ACK 存储（规划）
+## 送达 / 已读（SSOT：成员游标）
+- 单聊表：`t_single_chat_member`
+  - `last_delivered_msg_id`：该成员已投递到的最大 msgId（单调递增）
+  - `last_read_msg_id`：该成员已读到的最大 msgId（单调递增）
+- 群聊表：`t_group_member`
+  - `last_delivered_msg_id / last_read_msg_id`：语义同上
+
+## ACK 明细表（弃用/保留，非 SSOT）
 - 表：`t_message_ack`
-- 用途：存储客户端回执（DELIVERED/READ 等），用于更精细的投递确认与未读统计（后续迭代）。
+- 说明：本项目当前不写入该表（弃用业务写入），仅保留结构；送达/已读 SSOT 仍以成员游标（cursor）为准。
+- 备注：如未来确需“逐消息逐设备”的审计流水，再考虑启用为事件日志（仍非 SSOT），避免与 cursor 口径冲突。
 
 ## 通话记录（Phase1）
 - 表：`t_call_record`

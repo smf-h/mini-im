@@ -50,8 +50,10 @@ onMounted(() => void load())
         <UiAvatar :text="me?.nickname ?? me?.username ?? auth.userId ?? 'me'" :seed="auth.userId ?? 'me'" :size="64" />
         <div class="meta">
           <div class="name">{{ me?.nickname || me?.username || auth.userId }}</div>
-          <div class="muted">uid={{ auth.userId }}</div>
-          <div class="muted">WS: {{ wsBadge }}</div>
+          <div class="statusRow">
+            <span class="statusDot" :data-on="ws.connected && ws.authed ? '1' : '0'" aria-hidden="true"></span>
+            <div class="muted">{{ wsBadge }}</div>
+          </div>
         </div>
       </div>
 
@@ -95,5 +97,20 @@ onMounted(() => void load())
   font-weight: 900;
   font-size: 18px;
 }
+.statusRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.18);
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.04);
+}
+.statusDot[data-on='1'] {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.14);
+}
 </style>
-

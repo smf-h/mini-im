@@ -9,8 +9,7 @@ public class SingleChatMemberStateDto {
 
     private Long peerUserId;
 
-    private Long myLastReadMsgId;
+    private Long myLastReadMsgSeq;
 
-    private Long peerLastReadMsgId;
+    private Long peerLastReadMsgSeq;
 }
-

@@ -1,5 +1,7 @@
 # Instances=5..9（全量 ws_perf）对照：实例数是否继续压低单聊延迟（2026-01-15）
 
+> ⚠️ 历史记录：本文依赖当时的 `ws_perf` 分段打点与“全量记录”相关脚本参数，这些能力在后续版本已移除；本文仅保留当时的对照结论与分析方法（不可直接复现）。
+
 ## 目的
 
 在不改业务代码的前提下：
@@ -11,8 +13,8 @@
 
 ### 1) 为什么之前会出现 “ws_perf 的 dbQueue p50 > E2E p50”
 
-`ws_perf` 的记录逻辑在 `WsSingleChatHandler.maybeLogPerf()`：默认仅记录 `totalMs >= slowMs` 的慢请求，且对快请求按 `sampleRate` 抽样；因此 `ws_perf_summary` 天然偏慢。  
-本次通过 `-PerfTraceFull` 强制 `slowMs=0 + sampleRate=1.0`，避免偏置。
+当时的 `ws_perf` 记录逻辑默认只记录慢请求并对快请求抽样；因此 `ws_perf_summary` 天然偏慢。  
+本次通过“全量记录”（slowMs=0 + sampleRate=1.0）避免偏置。
 
 ### 2) ⚠️ 偶数实例数（6/8）会出现“只有一半网关有 single_chat 样本”
 
@@ -42,11 +44,11 @@
 - DurationConnectSeconds=20
 - Repeats=1
 - SkipConnectLarge
-- PerfTraceFull（slowMs=0, sampleRate=1.0）
+- （历史）全量分段打点（slowMs=0, sampleRate=1.0）
 
 命令模板：
 
-`powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-5x-test/run.ps1 -Instances {N} -SkipBuild -SkipConnectLarge -OpenLoop -MsgIntervalMs 3000 -DurationSmallSeconds 30 -DurationConnectSeconds 20 -Repeats 1 -PerfTraceFull`
+`powershell -ExecutionPolicy Bypass -File scripts/ws-cluster-5x-test/run.ps1 -Instances {N} -SkipBuild -SkipConnectLarge -OpenLoop -MsgIntervalMs 3000 -DurationSmallSeconds 30 -DurationConnectSeconds 20 -Repeats 1`
 
 ## 结果汇总（Instances=5..9）
 
@@ -91,4 +93,3 @@
 ## 下一步（如果你要继续用“加实例”验证极限）
 
 为了避免 6/8 的“半网关无样本”问题，建议后续做一个小改动让 sender 均匀落点（例如 rolePinned 选路改成 `hash(userId) % instances` 或对 sender 使用 `userId/2` 再取模），再重跑 Instances=5..9 才能回答“实例数是否单调提升吞吐/降低延迟”。
-

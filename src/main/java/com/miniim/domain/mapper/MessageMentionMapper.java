@@ -40,6 +40,8 @@ public interface MessageMentionMapper extends BaseMapper<MessageMentionEntity> {
             <script>
             select mm.group_id as groupId, count(*) as mentionUnreadCount
             from t_message_mention mm
+            join t_message m
+              on m.id = mm.message_id
             join t_group_member gm
               on gm.group_id = mm.group_id
              and gm.user_id = #{userId}
@@ -48,11 +50,10 @@ public interface MessageMentionMapper extends BaseMapper<MessageMentionEntity> {
               <foreach collection="groupIds" item="id" open="(" separator="," close=")">
                 #{id}
               </foreach>
-              and mm.message_id &gt; ifnull(gm.last_read_msg_id, 0)
+              and m.msg_seq &gt; ifnull(gm.last_read_msg_seq, 0)
             group by mm.group_id
             </script>
             """)
     List<Map<String, Object>> selectMentionUnreadCountsForUser(@Param("groupIds") List<Long> groupIds,
                                                                @Param("userId") long userId);
 }
-

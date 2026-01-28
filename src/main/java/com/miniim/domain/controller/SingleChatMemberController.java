@@ -58,9 +58,8 @@ public class SingleChatMemberController {
         SingleChatMemberStateDto dto = new SingleChatMemberStateDto();
         dto.setSingleChatId(singleChatId);
         dto.setPeerUserId(peerUserId);
-        dto.setMyLastReadMsgId(my == null ? null : my.getLastReadMsgId());
-        dto.setPeerLastReadMsgId(peer == null ? null : peer.getLastReadMsgId());
+        dto.setMyLastReadMsgSeq(my == null ? null : my.getLastReadMsgSeq());
+        dto.setPeerLastReadMsgSeq(peer == null ? null : peer.getLastReadMsgSeq());
         return Result.ok(dto);
     }
 }
-

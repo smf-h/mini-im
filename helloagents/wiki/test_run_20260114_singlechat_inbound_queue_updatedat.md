@@ -1,7 +1,9 @@
 # 2026-01-14 单聊专项回归（入站队列上限 + updatedAt 去抖）
 
+> ⚠️ 历史记录：本文涉及的“入站队列门禁 / ws_perf 分段打点 / 对应脚本参数”已在后续版本中移除，本文仅保留当时的对照结论与数据引用（不可直接复现）。
+
 本报告用于回答两个问题：
-1) 入站串行队列上限（`im.gateway.ws.inbound-queue.*`）对尾延迟/错误率的影响；
+1) 入站串行队列上限（已移除）对尾延迟/错误率的影响；
 2) `t_single_chat.updated_at` 去抖（1s 窗口）在 burst 场景是否能显著降低写放大并改善尾延迟。
 
 说明：同机 5 实例（共用本机 MySQL/Redis），属于“定位瓶颈/回归对比”，不能直接外推生产容量上限。
@@ -12,8 +14,7 @@
 
 ### 1.1 入站队列上限 = 2（更激进门禁）
 
-命令（关键参数）：
-- `scripts/ws-cluster-5x-test/run.ps1 -Instances 5 ... -MsgIntervalMs 3000 -OpenLoop -InboundQueueEnabled -InboundQueueMaxPendingPerConn 2`
+命令（关键参数）：（历史：当时脚本支持 InboundQueue 参数，现已移除）
 
 结果：
 - E2E（avg）：`logs/ws-cluster-5x-test_20260114_002954/single_e2e_5000_avg.json`
@@ -28,8 +29,7 @@
 
 ### 1.2 入站队列上限 = 500（更宽松）
 
-命令（关键参数）：
-- `scripts/ws-cluster-5x-test/run.ps1 -Instances 5 ... -MsgIntervalMs 3000 -OpenLoop -InboundQueueEnabled -InboundQueueMaxPendingPerConn 500`
+命令（关键参数）：（历史：当时脚本支持 InboundQueue 参数，现已移除）
 
 结果：
 - E2E（avg）：`logs/ws-cluster-5x-test_20260114_153056/single_e2e_5000_avg.json`
@@ -49,7 +49,7 @@
 
 目的：模拟同一会话短时间内高频消息，验证 `t_single_chat.updated_at` 去抖是否能明显减少写放大并改善尾延迟。
 
-为避免额外噪声，本轮跳过 50k connect：`scripts/ws-cluster-5x-test/run.ps1 -SkipConnectLarge ...`
+为避免额外噪声，本轮跳过 50k connect（历史：当时通过脚本参数实现）。
 
 ### 2.1 去抖开启（debounceEnabled=true, window=1000ms）
 
@@ -83,4 +83,3 @@
 
 - `updatedAt` 去抖建议保留默认开启（window=1000ms）；它在 burst 形态下的收益非常明确。
 - 入站队列上限不建议“一刀切设很小”（例如 2），更建议从 200~500 起步，以 `wsErrorRate < 5%` 为约束逐步收紧；并结合客户端退避 + 抖动重试策略做全链路回归。
-

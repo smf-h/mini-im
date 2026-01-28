@@ -20,6 +20,11 @@
 - `t_moment_like`
 - `t_moment_comment`
 
+### t_message_ack（弃用/保留，非 SSOT）
+
+- 本项目当前不写入该表（弃用业务写入），仅保留结构与枚举/注释对齐。
+- 送达/已读最终态以成员游标为准：`t_single_chat_member / t_group_member`。
+
 ### t_message 查询习惯（单聊）
 
 - 推荐用 `single_chat_id + id` 做游标分页：`where single_chat_id = ? and id < lastId order by id desc limit ?`

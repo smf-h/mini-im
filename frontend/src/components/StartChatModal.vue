@@ -92,7 +92,7 @@ onMounted(() => {
       </div>
 
       <div class="search">
-        <input v-model="q" class="input" placeholder="搜索昵称 / uid" />
+        <input v-model="q" class="input" placeholder="搜索昵称" />
       </div>
 
       <div class="list">
@@ -101,7 +101,6 @@ onMounted(() => {
         <button v-for="id in filtered" :key="id" class="rowBtn" type="button" @click="openChat(id)">
           <UiAvatar :text="users.displayName(id)" :seed="id" :size="40" />
           <div class="name">{{ users.displayName(id) }}</div>
-          <div class="uid">uid={{ id }}</div>
         </button>
         <div v-if="!loading && !errorMsg && filtered.length === 0" class="tail">暂无匹配</div>
       </div>
@@ -180,7 +179,7 @@ onMounted(() => {
 .rowBtn {
   width: 100%;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -201,11 +200,6 @@ onMounted(() => {
   font-weight: 800;
   font-size: 14px;
 }
-.uid {
-  flex: none;
-  font-size: 12px;
-  color: rgba(15, 23, 42, 0.55);
-}
 .tail {
   padding: 12px;
   text-align: center;
@@ -221,4 +215,3 @@ onMounted(() => {
   gap: 10px;
 }
 </style>
-

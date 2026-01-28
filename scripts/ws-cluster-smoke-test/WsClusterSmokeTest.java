@@ -214,9 +214,13 @@ public class WsClusterSmokeTest {
                 if (notifyServerMsgId == null || notifyServerMsgId.isBlank()) {
                     throw new RuntimeException("GROUP_NOTIFY missing serverMsgId");
                 }
-                long sinceId = parseLongOrZero(notifyServerMsgId) - 1;
-                if (sinceId < 0) sinceId = 0;
-                String pulled = pullGroupSince(http, HTTP_B, b.accessToken, groupId, sinceId);
+                String notifyMsgSeq = extractString(gAny, "msgSeq");
+                if (notifyMsgSeq == null || notifyMsgSeq.isBlank()) {
+                    throw new RuntimeException("GROUP_NOTIFY missing msgSeq");
+                }
+                long sinceSeq = parseLongOrZero(notifyMsgSeq) - 1;
+                if (sinceSeq < 0) sinceSeq = 0;
+                String pulled = pullGroupSince(http, HTTP_B, b.accessToken, groupId, sinceSeq);
                 steps.add(step("B->HTTP", "group/message/since", pulled));
                 if (!pulled.contains(notifyServerMsgId)) {
                     throw new RuntimeException("since did not include serverMsgId=" + notifyServerMsgId);
@@ -304,26 +308,17 @@ public class WsClusterSmokeTest {
         }
     }
 
-    private static String pullGroupSince(HttpClient http, String base, String token, String groupId, long sinceId) throws Exception {
-        String url = base + "/group/message/since?groupId=" + urlEncode(groupId) + "&limit=50&sinceId=" + sinceId;
+    private static String pullGroupSince(HttpClient http, String base, String token, String groupId, long sinceSeq) throws Exception {
+        String url = base + "/group/message/since?groupId=" + urlEncode(groupId) + "&limit=50&sinceSeq=" + sinceSeq;
         return httpGet(http, url, token);
     }
 
     private static WebSocket connectPreferHeaderThenQuery(HttpClient httpClient, String wsUrl, String token, QueueListener listener) {
-        try {
-            return httpClient.newWebSocketBuilder()
-                    .header("Authorization", "Bearer " + token)
-                    .buildAsync(URI.create(wsUrl), listener)
-                    .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    .join();
-        } catch (Exception e) {
-            String sep = wsUrl.contains("?") ? "&" : "?";
-            String url = wsUrl + sep + "token=" + urlEncode(token);
-            return httpClient.newWebSocketBuilder()
-                    .buildAsync(URI.create(url), listener)
-                    .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    .join();
-        }
+        // AUTH-first：握手阶段不再做鉴权；token 只在首包 AUTH 里传。
+        return httpClient.newWebSocketBuilder()
+                .buildAsync(URI.create(wsUrl), listener)
+                .orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .join();
     }
 
     private static void auth(WebSocket ws, String token, BlockingQueue<String> inbox) throws Exception {
